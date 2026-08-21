@@ -1,0 +1,22 @@
+services:
+  nimbus:
+    build: .
+    container_name: nimbus-drive
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Point these at your real values, or use env_file with your .env
+      APP_NAME: ${APP_NAME:-Nimbus Drive}
+      BASE_URL: ${BASE_URL:-http://localhost:3000}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      STORAGE_ROOT: /storage
+      DATA_DIR: /data
+      API_PORT: 4400
+      WATCH_POLLING: ${WATCH_POLLING:-false}
+    volumes:
+      # Left side: the folder on YOUR machine where files live
+      - ./storage:/storage
+      - ./data:/data

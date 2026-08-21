@@ -1,0 +1,15 @@
+# dependencies / build output
+node_modules/
+web/.next/
+web/out/
+
+# machine-specific config & runtime data
+.env
+.env.bak
+data/
+storage/
+
+# logs & OS noise
+*.log
+.DS_Store
+Thumbs.db

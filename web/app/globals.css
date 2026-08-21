@@ -1,0 +1,49 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+/* Make Tailwind's `dark:` variant follow the theme class set by next-themes */
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  --nimbus-sidebar-w: 260px;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  overscroll-behavior-y: none;
+}
+
+/* Subtle scrollbars everywhere */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, currentColor 25%, transparent) transparent;
+}
+
+/* File tiles */
+.nimbus-tile {
+  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.nimbus-tile:active {
+  transform: scale(0.985);
+}
+
+/* Drop overlay */
+.nimbus-drop-overlay {
+  backdrop-filter: blur(2px);
+}
+
+/* Preview media sizing */
+.nimbus-preview-media {
+  max-width: 100%;
+  max-height: min(72vh, 900px);
+  object-fit: contain;
+}
+
+/* Hide number input arrows etc. in dialogs */
+input[type="search"]::-webkit-search-cancel-button {
+  display: none;
+}

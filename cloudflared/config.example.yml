@@ -1,0 +1,22 @@
+# Cloudflare named-tunnel config — see SETUP.md §5 for the full walkthrough.
+#
+# After `cloudflared tunnel create nimbus` this file goes to:
+#   Windows: C:\Users\<you>\.cloudflared\config.yml
+#   Linux/macOS: ~/.cloudflared/config.yml
+#
+# Replace <TUNNEL-ID> with the ID printed by `cloudflared tunnel create`,
+# and drive.example.com with your own (sub)domain.
+
+tunnel: <TUNNEL-ID>
+credentials-file: <PATH-TO>/<TUNNEL-ID>.json
+
+ingress:
+  # Everything goes to the Next.js app; it proxies /api to the backend itself.
+  - hostname: drive.example.com
+    service: http://localhost:3000
+    originRequest:
+      # Big uploads/downloads must not be cut off
+      connectTimeout: 30s
+      noTLSVerify: true
+  # Required catch-all
+  - service: http_status:404
