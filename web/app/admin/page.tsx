@@ -50,10 +50,11 @@ export default function AdminPage() {
   }
 
   async function setVisibility(everyone: boolean) {
+    const isEveryone = Boolean(everyone);
     try {
-      await api("/api/admin/visibility", { json: { visibility: everyone ? "everyone" : "admin_only" } });
+      await api("/api/admin/visibility", { json: { visibility: isEveryone ? "everyone" : "admin_only" } });
       await mutate();
-      toast.success(everyone ? "Everyone on the allowlist can now browse the whole drive" : "Only admins can browse the drive now");
+      toast.success(isEveryone ? "Everyone on the allowlist can now browse the whole drive" : "Only admins can browse the drive now");
     } catch (e) {
       toast.danger(e instanceof Error ? e.message : "Could not change visibility");
     }
@@ -96,7 +97,10 @@ export default function AdminPage() {
                 </p>
                 <Switch
                   isSelected={data.visibility === "everyone"}
-                  onChange={(v: boolean) => setVisibility(v)}
+                  onChange={(e: any) => {
+                    const isChecked = typeof e === "boolean" ? e : Boolean(e?.target?.checked);
+                    setVisibility(isChecked);
+                  }}
                   aria-label="Everyone can browse the whole drive"
                 >
                   <Switch.Control>
