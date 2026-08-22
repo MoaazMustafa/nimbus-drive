@@ -33,7 +33,9 @@ export function streamFile(req, res, abs, stat, { mode = 'inline', filename } = 
   const range = req.headers.range;
   let start = 0;
   let end = stat.size - 1;
-  if (range) {
+  // Empty files: a "bytes=0-" range would compute end=-1 and 416. Just send the
+  // (empty) body with a normal 200 so 0-byte files still open/download fine.
+  if (range && stat.size > 0) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (m && (m[1] || m[2])) {
       if (m[1]) start = parseInt(m[1], 10);
@@ -51,8 +53,8 @@ export function streamFile(req, res, abs, stat, { mode = 'inline', filename } = 
       res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
     }
   }
-  res.setHeader('Content-Length', end - start + 1);
-  if (req.method === 'HEAD') {
+  res.setHeader('Content-Length', stat.size === 0 ? 0 : end - start + 1);
+  if (req.method === 'HEAD' || stat.size === 0) {
     res.end();
     return;
   }
@@ -76,5 +78,25 @@ export function streamZip(res, absDir, zipName) {
   res.on('close', () => archive.destroy());
   archive.pipe(res);
   archive.directory(absDir, path.basename(zipName, '.zip'));
+  archive.finalize();
+}
+
+/** Stream several selected files/folders as one zip (bulk download). */
+export function streamZipEntries(res, entries, zipName) {
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename*=UTF-8''${encodeURIComponent(zipName.endsWith('.zip') ? zipName : zipName + '.zip')}`
+  );
+  res.setHeader('Cache-Control', 'private, no-store');
+  const archive = new ZipArchive({ zlib: { level: 6 } });
+  archive.on('warning', () => {});
+  archive.on('error', () => res.destroy());
+  res.on('close', () => archive.destroy());
+  archive.pipe(res);
+  for (const e of entries) {
+    if (e.isDir) archive.directory(e.abs, e.entryName);
+    else archive.file(e.abs, { name: e.entryName });
+  }
   archive.finalize();
 }

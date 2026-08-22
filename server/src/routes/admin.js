@@ -6,10 +6,7 @@ import {
   addAllowlist,
   removeAllowlist,
   listUsers,
-  getVisibility,
-  setSetting,
-  allShares,
-  deleteShare,
+  listActivity,
 } from '../db.js';
 
 export const adminRouter = Router();
@@ -21,7 +18,6 @@ adminRouter.get(
   wrap(async (_req, res) => {
     res.json({
       adminEmail: config.adminEmail,
-      visibility: getVisibility(),
       allowlist: listAllowlist(),
       users: listUsers(),
     });
@@ -50,27 +46,14 @@ adminRouter.delete(
   })
 );
 
-adminRouter.post(
-  '/admin/visibility',
-  wrap(async (req, res) => {
-    const v = req.body?.visibility;
-    if (!['admin_only', 'everyone'].includes(v)) throw httpError(400, 'visibility must be admin_only or everyone');
-    setSetting('visibility', v);
-    res.json({ ok: true, visibility: v });
-  })
-);
-
 adminRouter.get(
-  '/admin/shares',
-  wrap(async (_req, res) => {
-    res.json({ shares: allShares() });
-  })
-);
-
-adminRouter.delete(
-  '/admin/shares/:token',
+  '/admin/activity',
   wrap(async (req, res) => {
-    deleteShare(req.params.token);
-    res.json({ ok: true });
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const email = req.query.email ? String(req.query.email).trim().toLowerCase() : null;
+    const action = req.query.action ? String(req.query.action).trim() : null;
+    const { rows, total } = listActivity({ limit, offset, email, action });
+    res.json({ activity: rows, total, limit, offset });
   })
 );

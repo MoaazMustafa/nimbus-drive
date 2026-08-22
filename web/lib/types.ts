@@ -29,25 +29,44 @@ export interface Me {
   email: string;
   isAdmin: boolean;
   canBrowse: boolean;
-  visibility: "admin_only" | "everyone";
   appName: string;
 }
 
-export interface Share {
+/** A public link — anyone with the URL can open the item, no login required. */
+export interface Link {
   token: string;
   path: string;
   name: string;
   isDir: boolean;
   kind: Kind;
-  mode: "workspace" | "restricted";
   createdBy: string;
   createdAt: number;
   expiresAt: number | null;
   url: string;
-  members?: string[];
   exists?: boolean;
   size?: number | null;
   mtime?: number;
+}
+
+export interface TrashItem {
+  id: string;
+  name: string;
+  origPath: string;
+  isDir: boolean;
+  size: number | null;
+  deletedBy: string | null;
+  deletedAt: number;
+  kind: Kind;
+}
+
+export interface Activity {
+  id: number;
+  ts: number;
+  email: string | null;
+  action: string;
+  path: string | null;
+  detail: string | null;
+  ip: string | null;
 }
 
 export interface AllowlistRow {

@@ -7,12 +7,13 @@ Your own Google-Drive-style cloud — running on **your** computer, storing file
 ## What it does
 
 - **Files live on your disk.** The app serves a normal folder (`STORAGE_ROOT`). Paste files into it in Explorer/Finder and they appear in the web UI within seconds (file-watcher + live refresh) — and anything uploaded through the browser is just a normal file in that folder.
-- **Google sign-in only, allowlist only.** There are no passwords. Sign-in goes through Google OAuth, and after Google says who the person is, they must also be on *your* allowlist (managed in the Admin page) or they're turned away. Removing someone signs them out everywhere instantly.
-- **Nothing opens without authorization** — Google-Photos style. Every byte (files, previews, even thumbnails) streams through an access-checked API. There are no public URLs; a leaked link is useless without an authorized login.
-- **Drive-like UI.** Folder browsing, drag-and-drop uploads with progress, grid/list views, image thumbnails, previews (images, video with seeking, audio, PDF, text), rename, move, zip-download for folders, search, dark mode.
-- **Sharing, both ways.** Share any file or folder by copyable link: *"anyone authorized with the link"* or *"specific people only"*. Recipients see items in **Shared with me**; you manage everything in **My links**. Deleting a file kills its links; renaming keeps them working.
-- **Two drive modes** (Admin toggle): *admin-only* — guests see only what's shared with them (default), or *everyone* — all allowlisted users browse and manage the whole drive together.
-- **Runs on any machine.** Windows, macOS, Linux, or Docker. One `.env` file holds everything machine-specific. Deleted files go to a trash folder, not oblivion.
+- **Google sign-in, allowlist only.** There are no passwords. Sign-in goes through Google OAuth, and after Google says who the person is, they must also be on *your* allowlist (managed in the Admin page) or they're turned away. **Everyone on the allowlist is family — they get full access to the whole drive.** Removing someone signs them out everywhere instantly.
+- **Private by default.** Every byte (files, previews, even thumbnails) streams through an access-checked API. The one exception is a **public link** you deliberately create for a specific item (below) — everything else stays behind Google sign-in.
+- **Drive-like UI.** Folder browsing, drag-and-drop **file *and* folder** uploads with progress, **multi-select** for bulk download / move / delete, grid/list views, image thumbnails, previews (images, video with seeking, audio, PDF, text), rename, move, zip-download, search, dark mode — and it's **installable as an app** (PWA) on phone or desktop.
+- **Public links (no login).** Turn any file or folder into a read-only link that **anyone can open without signing in** — handy for sending something to a relative who isn't on the drive. Optional expiry, revoke anytime, manage them all under **Links**. Deleting a file kills its links; renaming keeps them working.
+- **Trash you can actually use.** Deleted items go to **Trash** in the sidebar — restore them to where they came from, or delete forever / empty the trash when you're sure.
+- **Admin activity log.** The owner and admins see who signed in and who uploaded, downloaded, previewed, renamed, moved or deleted what — with timestamps — filterable by person or action.
+- **Runs on any machine.** Windows, macOS, Linux, or Docker. One `.env` file holds everything machine-specific.
 
 ## The stack
 
@@ -60,7 +61,7 @@ nimbus-drive/
 
 ## Good to know
 
-- **Trash, not delete.** Deleting in the UI moves things to `data/trash` (timestamped). Empty it whenever you like — or set `TRASH_ENABLED=false` for hard deletes.
-- **Backups** = copy two folders: your storage folder and `data/`. That's the whole state.
-- **Offline behavior:** on your LAN everything keeps working except *new* Google sign-ins (existing sessions live `SESSION_TTL_DAYS`). The public URL needs the tunnel up.
-- **Self-check:** `npm run test:e2e` boots the whole backend against a mock Google and runs ~50 checks (auth, sharing, security, watcher) in under 30 seconds. Run it after any change.
+- **Trash, not delete.** Deleting moves things to `data/trash`; restore or purge them from the **Trash** page — or set `TRASH_ENABLED=false` for hard deletes.
+- **Backups** = copy two folders: your storage folder and `data/`. That's the whole state (files, allowlist, links, activity log).
+- **Offline behavior:** on your LAN everything keeps working except *new* Google sign-ins (existing sessions live `SESSION_TTL_DAYS`); reaching the app by its LAN IP works for uploads and edits too. The public URL needs the tunnel up. Installed as a PWA, the shell opens offline.
+- **Self-check:** `npm run test:e2e` boots the whole backend against a mock Google and runs ~60 checks (auth, family access, uploads, public links, trash, activity, security, watcher) in under 30 seconds. Run it after any change.

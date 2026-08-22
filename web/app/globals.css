@@ -27,6 +27,7 @@ body {
 .nimbus-tile {
   transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
+
 .nimbus-tile:active {
   transform: scale(0.985);
 }
@@ -46,4 +47,8 @@ body {
 /* Hide number input arrows etc. in dialogs */
 input[type="search"]::-webkit-search-cancel-button {
   display: none;
+}
+
+*::selection {
+  background-color: color-mix(in srgb, currentColor 35%, transparent);
 }

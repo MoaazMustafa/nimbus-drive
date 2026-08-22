@@ -87,3 +87,35 @@ export function timeAgo(ms: number): string {
 export function parentOf(path: string): string {
   return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 }
+
+/** Trigger a browser download for a same-origin GET URL. */
+export function triggerDownload(url: string, name?: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  if (name) a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+/**
+ * Bulk-download several items as a zip. Uses a hidden form POST so the browser
+ * streams the zip straight to disk (no buffering the whole archive in memory).
+ */
+export function downloadZip(paths: string[]) {
+  if (paths.length === 0) return;
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = "/api/fs/zip";
+  form.style.display = "none";
+  for (const p of paths) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "p";
+    input.value = p;
+    form.appendChild(input);
+  }
+  document.body.appendChild(form);
+  form.submit();
+  setTimeout(() => form.remove(), 1000);
+}

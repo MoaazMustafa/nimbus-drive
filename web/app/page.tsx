@@ -7,7 +7,6 @@ import { AppShell } from "@/components/AppShell";
 import { FileBrowser } from "@/components/FileBrowser";
 import { useMe } from "@/lib/hooks";
 import { enc } from "@/lib/api";
-import Link from "next/link";
 
 function DrivePage() {
   const { me, isLoading } = useMe();
@@ -33,28 +32,12 @@ function DrivePage() {
 
   return (
     <AppShell>
-      {me.canBrowse ? (
-        <FileBrowser
-          path={path}
-          onNavigate={navigate}
-          initialPreviewName={previewName}
-          onConsumedPreview={() => router.replace(path ? `/?p=${enc(path)}` : "/")}
-        />
-      ) : (
-        <div className="grid min-h-[60dvh] place-items-center px-6 text-center">
-          <div className="max-w-md">
-            <h1 className="text-xl font-semibold">Welcome!</h1>
-            <p className="mt-2 text-sm leading-relaxed text-muted">
-              Your account has guest access: you can open anything that has been shared with you.
-              Check{" "}
-              <Link href="/shared" className="text-accent underline underline-offset-2">
-                Shared with me
-              </Link>{" "}
-              to see your files.
-            </p>
-          </div>
-        </div>
-      )}
+      <FileBrowser
+        path={path}
+        onNavigate={navigate}
+        initialPreviewName={previewName}
+        onConsumedPreview={() => router.replace(path ? `/?p=${enc(path)}` : "/")}
+      />
     </AppShell>
   );
 }

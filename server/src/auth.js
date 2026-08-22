@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import config from './config.js';
-import { httpError, randomToken, wrap } from './util.js';
+import { httpError, randomToken, wrap, clientIp } from './util.js';
 import {
   createSession,
   deleteSession,
@@ -9,7 +9,7 @@ import {
   isAdminEmail,
   isAuthorizedEmail,
   canBrowseEmail,
-  getVisibility,
+  logActivity,
 } from './db.js';
 
 const SID_COOKIE = 'nimbus_sid';
@@ -52,7 +52,7 @@ function redirectUri() {
   return `${config.baseUrl}/api/auth/callback/google`;
 }
 
-/** Attach req.user if a valid session cookie is present. */
+/** Attach req.user if a valid session cookie is present. Never throws. */
 export function attachUser(req, _res, next) {
   const sid = parseCookies(req)[SID_COOKIE];
   const session = getSession(sid);
@@ -71,9 +71,9 @@ export function requireAuth(req, _res, next) {
   if (!req.user) throw httpError(401, 'Sign in required');
   next();
 }
+// Every authorized user can browse the whole drive, so this is just "signed in".
 export function requireBrowse(req, _res, next) {
   if (!req.user) throw httpError(401, 'Sign in required');
-  if (!req.user.canBrowse) throw httpError(403, 'You only have access to items shared with you');
   next();
 }
 export function requireAdmin(req, _res, next) {
@@ -149,6 +149,7 @@ authRouter.get(
     if (profile.email_verified === false || profile.email_verified === 'false') return fail('unverified_email');
 
     if (!isAuthorizedEmail(email)) {
+      logActivity({ email, action: 'login_denied', ip: clientIp(req), detail: 'not on allowlist' });
       return res.redirect(`${config.baseUrl}/login?error=not_authorized&email=${encodeURIComponent(email)}`);
     }
 
@@ -156,6 +157,7 @@ authRouter.get(
     const sid = randomToken(32);
     const ttlMs = config.sessionTtlDays * 24 * 3600 * 1000;
     createSession(sid, email, ttlMs, req.headers['user-agent']);
+    logActivity({ email, action: 'login', ip: clientIp(req), detail: (req.headers['user-agent'] || '').slice(0, 200) });
     res.setHeader('Set-Cookie', serializeCookie(SID_COOKIE, sid, config.sessionTtlDays * 24 * 3600));
     res.redirect(`${config.baseUrl}${next_}`);
   })
@@ -163,7 +165,11 @@ authRouter.get(
 
 authRouter.post('/auth/logout', (req, res) => {
   const sid = parseCookies(req)[SID_COOKIE];
-  if (sid) deleteSession(sid);
+  if (sid) {
+    const s = getSession(sid);
+    if (s) logActivity({ email: s.email, action: 'logout', ip: clientIp(req) });
+    deleteSession(sid);
+  }
   res.setHeader('Set-Cookie', serializeCookie(SID_COOKIE, '', 0));
   res.json({ ok: true });
 });
@@ -174,7 +180,6 @@ authRouter.get('/me', (req, res) => {
     email: req.user.email,
     isAdmin: req.user.isAdmin,
     canBrowse: req.user.canBrowse,
-    visibility: getVisibility(),
     appName: config.appName,
   });
 });

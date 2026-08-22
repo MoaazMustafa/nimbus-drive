@@ -1,6 +1,7 @@
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import config from './config.js';
+import { escapeLike } from './util.js';
 
 const db = new Database(path.join(config.dataDir, 'nimbus.db'));
 db.pragma('journal_mode = WAL');
@@ -29,25 +30,48 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_agent TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_email ON sessions(email);
-CREATE TABLE IF NOT EXISTS shares (
-  token TEXT PRIMARY KEY,
-  rel_path TEXT NOT NULL,
-  is_dir INTEGER NOT NULL,
-  mode TEXT NOT NULL CHECK (mode IN ('workspace','restricted')),
-  created_by TEXT NOT NULL,
-  created_at INTEGER,
-  expires_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_shares_path ON shares(rel_path);
-CREATE TABLE IF NOT EXISTS share_members (
-  token TEXT NOT NULL REFERENCES shares(token) ON DELETE CASCADE,
-  email TEXT NOT NULL,
-  PRIMARY KEY (token, email)
-);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+-- Public links: anyone with the token can open the item, no login required (read-only).
+CREATE TABLE IF NOT EXISTS links (
+  token TEXT PRIMARY KEY,
+  rel_path TEXT NOT NULL,
+  is_dir INTEGER NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER,
+  expires_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_links_path ON links(rel_path);
+CREATE INDEX IF NOT EXISTS idx_links_creator ON links(created_by);
+
+-- Trash: metadata for items moved to DATA_DIR/trash so they can be restored.
+CREATE TABLE IF NOT EXISTS trash (
+  id TEXT PRIMARY KEY,          -- on-disk filename inside data/trash
+  orig_path TEXT NOT NULL,      -- original rel path it came from
+  name TEXT NOT NULL,
+  is_dir INTEGER NOT NULL,
+  size INTEGER,
+  deleted_by TEXT,
+  deleted_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_trash_deleted_at ON trash(deleted_at);
+
+-- Activity log: who did what, when (for the admin audit view).
+CREATE TABLE IF NOT EXISTS activity (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  email TEXT,
+  action TEXT NOT NULL,
+  path TEXT,
+  detail TEXT,
+  ip TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity(ts);
+CREATE INDEX IF NOT EXISTS idx_activity_email ON activity(email);
 `);
 
 // ---------- settings ----------
@@ -61,10 +85,9 @@ export const getSetting = (key, dflt = null) => {
 };
 export const setSetting = (key, value) => setSettingStmt.run(key, String(value));
 
-// visibility: 'admin_only' (guests only see what is shared with them) | 'everyone' (all authorized users browse the whole drive)
-export const getVisibility = () => getSetting('visibility', 'admin_only');
-
 // ---------- roles ----------
+// Model: everyone on the allowlist (and the owner) has FULL access to the drive.
+// Admins additionally manage the allowlist and see the activity log.
 const allowRow = db.prepare('SELECT * FROM allowlist WHERE email = ?');
 export function isAdminEmail(email) {
   if (!email) return false;
@@ -77,9 +100,9 @@ export function isAuthorizedEmail(email) {
   if (email === config.adminEmail) return true;
   return !!allowRow.get(email);
 }
+// Kept for API shape; every authorized user can browse the whole drive now.
 export function canBrowseEmail(email) {
-  if (isAdminEmail(email)) return true;
-  return isAuthorizedEmail(email) && getVisibility() === 'everyone';
+  return isAuthorizedEmail(email);
 }
 
 // ---------- users ----------
@@ -127,57 +150,92 @@ export function removeAllowlist(email) {
   db.prepare('DELETE FROM sessions WHERE email = ?').run(email); // revoke access immediately
 }
 
-// ---------- shares ----------
-export const insertShare = db.prepare(`
-INSERT INTO shares (token, rel_path, is_dir, mode, created_by, created_at, expires_at)
-VALUES (@token, @rel_path, @is_dir, @mode, @created_by, @created_at, @expires_at)
+// ---------- public links ----------
+export const insertLink = db.prepare(`
+INSERT INTO links (token, rel_path, is_dir, created_by, created_at, expires_at)
+VALUES (@token, @rel_path, @is_dir, @created_by, @created_at, @expires_at)
 `);
-export const getShare = (token) => {
-  const s = db.prepare('SELECT * FROM shares WHERE token = ?').get(token);
+export const getLink = (token) => {
+  if (!token) return null;
+  const s = db.prepare('SELECT * FROM links WHERE token = ?').get(token);
   if (!s) return null;
   if (s.expires_at && s.expires_at < Date.now()) return null;
   return s;
 };
-export const shareMembers = (token) =>
-  db.prepare('SELECT email FROM share_members WHERE token = ?').all(token).map((r) => r.email);
-export const addShareMember = (token, email) =>
-  db.prepare('INSERT OR IGNORE INTO share_members (token, email) VALUES (?, ?)').run(token, email);
-export const clearShareMembers = (token) => db.prepare('DELETE FROM share_members WHERE token = ?').run(token);
-export const deleteShare = (token) => db.prepare('DELETE FROM shares WHERE token = ?').run(token);
-export const sharesForPath = (relPath) => db.prepare('SELECT * FROM shares WHERE rel_path = ?').all(relPath);
-export const sharesByCreator = (email) =>
-  db.prepare('SELECT * FROM shares WHERE created_by = ? ORDER BY created_at DESC').all(email);
-export const allShares = () => db.prepare('SELECT * FROM shares ORDER BY created_at DESC').all();
-export const sharesVisibleTo = (email) =>
-  db
-    .prepare(
-      `SELECT DISTINCT s.* FROM shares s
-       LEFT JOIN share_members m ON m.token = s.token
-       WHERE (s.mode = 'workspace' OR m.email = ?) AND s.created_by != ?
-         AND (s.expires_at IS NULL OR s.expires_at > ?)
-       ORDER BY s.created_at DESC`
-    )
-    .all(email, email, Date.now());
+export const deleteLink = (token) => db.prepare('DELETE FROM links WHERE token = ?').run(token);
+export const linksForPath = (relPath) => db.prepare('SELECT * FROM links WHERE rel_path = ?').all(relPath);
+export const linksByCreator = (email) =>
+  db.prepare('SELECT * FROM links WHERE created_by = ? ORDER BY created_at DESC').all(email);
+export const allLinks = () => db.prepare('SELECT * FROM links ORDER BY created_at DESC').all();
 
-/** Keep share paths in sync when files are renamed/moved inside the app. */
-export function retargetShares(oldRel, newRel) {
+/** Keep link paths in sync when files are renamed/moved inside the app. */
+export function retargetLinks(oldRel, newRel) {
   const tx = db.transaction(() => {
-    db.prepare('UPDATE shares SET rel_path = ? WHERE rel_path = ?').run(newRel, oldRel);
+    db.prepare('UPDATE links SET rel_path = ? WHERE rel_path = ?').run(newRel, oldRel);
     const prefix = oldRel + '/';
-    const rows = db.prepare('SELECT token, rel_path FROM shares WHERE rel_path LIKE ?').all(prefix + '%');
+    const rows = db
+      .prepare("SELECT token, rel_path FROM links WHERE rel_path LIKE ? ESCAPE '\\'")
+      .all(escapeLike(prefix) + '%');
     for (const r of rows) {
-      db.prepare('UPDATE shares SET rel_path = ? WHERE token = ?').run(newRel + '/' + r.rel_path.slice(prefix.length), r.token);
+      db.prepare('UPDATE links SET rel_path = ? WHERE token = ?').run(
+        newRel + '/' + r.rel_path.slice(prefix.length),
+        r.token
+      );
     }
   });
   tx();
 }
-/** Remove shares pointing at a deleted path (and anything under it). */
-export function dropSharesUnder(rel) {
+/** Remove links pointing at a deleted path (and anything under it). */
+export function dropLinksUnder(rel) {
   const tx = db.transaction(() => {
-    db.prepare('DELETE FROM shares WHERE rel_path = ?').run(rel);
-    db.prepare("DELETE FROM shares WHERE rel_path LIKE ?").run(rel + '/%');
+    db.prepare('DELETE FROM links WHERE rel_path = ?').run(rel);
+    db.prepare("DELETE FROM links WHERE rel_path LIKE ? ESCAPE '\\'").run(escapeLike(rel + '/') + '%');
   });
   tx();
 }
+
+// ---------- trash ----------
+export const addTrash = db.prepare(`
+INSERT INTO trash (id, orig_path, name, is_dir, size, deleted_by, deleted_at)
+VALUES (@id, @orig_path, @name, @is_dir, @size, @deleted_by, @deleted_at)
+`);
+export const listTrash = () => db.prepare('SELECT * FROM trash ORDER BY deleted_at DESC').all();
+export const getTrash = (id) => db.prepare('SELECT * FROM trash WHERE id = ?').get(id);
+export const removeTrash = (id) => db.prepare('DELETE FROM trash WHERE id = ?').run(id);
+export const clearTrash = () => db.prepare('DELETE FROM trash').run();
+
+// ---------- activity ----------
+const insertActivity = db.prepare(
+  'INSERT INTO activity (ts, email, action, path, detail, ip) VALUES (?, ?, ?, ?, ?, ?)'
+);
+export function logActivity({ email = null, action, path = null, detail = null, ip = null }) {
+  try {
+    insertActivity.run(Date.now(), email, action, path, detail, ip);
+  } catch {
+    /* logging must never break a request */
+  }
+}
+export function listActivity({ limit = 100, offset = 0, email = null, action = null } = {}) {
+  const where = [];
+  const args = [];
+  if (email) {
+    where.push('email = ?');
+    args.push(email);
+  }
+  if (action) {
+    where.push('action = ?');
+    args.push(action);
+  }
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const rows = db
+    .prepare(`SELECT * FROM activity ${clause} ORDER BY ts DESC LIMIT ? OFFSET ?`)
+    .all(...args, Math.min(Math.max(1, limit), 500), Math.max(0, offset));
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM activity ${clause}`).get(...args).n;
+  return { rows, total };
+}
+export const pruneActivity = (keep = 20000) =>
+  db
+    .prepare('DELETE FROM activity WHERE id NOT IN (SELECT id FROM activity ORDER BY ts DESC LIMIT ?)')
+    .run(keep);
 
 export default db;

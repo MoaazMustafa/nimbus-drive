@@ -51,8 +51,10 @@ npm start       # runs the API and the web app together
 
 Open **http://localhost:3000** → *Continue with Google* → sign in with your `ADMIN_EMAIL` account. You're the owner:
 
-- **Admin → Allowlist** — add the Gmail addresses of people you trust (tick *Admin* to give someone full access). Anyone not listed is rejected at login, even with a valid Google account.
-- **Admin → Drive visibility** — default is *admins only*: other people see **only what you share with them**. Flip the switch if instead you want every allowlisted user to browse the whole drive.
+- **Admin → Allowlist** — add the Gmail addresses of the family/people you trust. Everyone on the list gets **full access** to the drive; tick *Admin* to also let someone manage the allowlist and see the activity log. Anyone not listed is rejected at login, even with a valid Google account.
+- **Admin → Activity** — see who signed in and what everyone uploaded, downloaded, previewed or changed, with timestamps.
+- **Share without an account** — open any file/folder's menu → *Get link* to create a read-only **public link** anyone can open with no sign-in (handy for people not on the drive). Manage them under **Links**.
+- **Trash** — deleted items land in the Trash page; restore or purge them there.
 - Paste some files into your storage folder in Explorer — watch them appear in the browser without a refresh.
 
 For development with hot-reload use `npm run dev` instead of `build` + `start`.

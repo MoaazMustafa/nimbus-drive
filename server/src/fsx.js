@@ -116,6 +116,63 @@ export async function uniqueName(dirAbs, name) {
   return candidate;
 }
 
+/**
+ * Move a temp FILE into destDirAbs under a non-colliding name, race-safely.
+ * Each candidate name is reserved with an exclusive create ('wx') so two
+ * concurrent uploads can never resolve to the same name and overwrite each
+ * other (the old uniqueName + rename had a check-then-act data-loss race).
+ * Returns the final name used.
+ */
+export async function placeFileUnique(destDirAbs, name, tmpPath) {
+  const ext = path.extname(name);
+  const base = ext ? name.slice(0, -ext.length) : name;
+  let candidate = name;
+  let i = 1;
+  for (;;) {
+    const dest = path.join(destDirAbs, candidate);
+    let fh;
+    try {
+      fh = await fsp.open(dest, 'wx'); // atomically reserve this exact name
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        candidate = `${base} (${i})${ext}`;
+        i += 1;
+        if (i > 1000) throw httpError(409, 'Too many name collisions');
+        continue;
+      }
+      throw err;
+    }
+    await fh.close();
+    // We now own an empty placeholder at `dest`; replace it with the real bytes.
+    try {
+      await fsp.rename(tmpPath, dest);
+    } catch (err) {
+      if (err.code !== 'EXDEV') throw err;
+      await fsp.rm(dest, { force: true });
+      await pipeline(fs.createReadStream(tmpPath), fs.createWriteStream(dest));
+      await fsp.rm(tmpPath, { force: true });
+    }
+    return candidate;
+  }
+}
+
+/**
+ * Ensure base/sub exists (creating intermediate folders) and return it, staying
+ * inside the storage root. Each path segment is validated. Used by folder uploads
+ * to recreate the dropped folder structure.
+ */
+export async function ensureSubdir(baseRel, subRel) {
+  const parts = cleanRel(subRel).split('/').filter(Boolean);
+  let curRel = cleanRel(baseRel);
+  for (const part of parts) {
+    validateName(part);
+    curRel = curRel ? `${curRel}/${part}` : part;
+    const { abs } = resolveSafe(curRel);
+    await fsp.mkdir(abs, { recursive: true });
+  }
+  return resolveSafe(curRel);
+}
+
 /** Rename/move that survives crossing drives (EXDEV -> copy + delete). */
 export async function moveResilient(from, to) {
   try {

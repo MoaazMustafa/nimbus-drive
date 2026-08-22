@@ -1,45 +1,36 @@
 "use client";
 
 import { use, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { Breadcrumbs, Button, Spinner } from "@heroui/react";
 import { Cloud, Download, Eye, Lock } from "lucide-react";
-import { ApiError, api, enc, fetcher, formatBytes, formatDate } from "@/lib/api";
-import type { Entry, Listing, Share } from "@/lib/types";
+import { ApiError, enc, fetcher, formatBytes, formatDate, triggerDownload } from "@/lib/api";
+import type { Entry, Link as PublicLink, Listing } from "@/lib/types";
 import { ItemIcon } from "@/components/ItemIcon";
 import { PreviewModal, type PreviewTarget } from "@/components/PreviewModal";
-import { useMe } from "@/lib/hooks";
 
 const PREVIEWABLE = new Set(["image", "video", "audio", "pdf", "text"]);
 
-export default function SharedItemPage({ params }: { params: Promise<{ token: string }> }) {
+export default function PublicLinkPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
-  const router = useRouter();
-  const { me } = useMe(false);
   const [sub, setSub] = useState("");
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
 
-  const { data: meta, error: metaError } = useSWR<Share>(`/api/shares/${token}/meta`, fetcher, {
+  const { data: meta, error: metaError } = useSWR<PublicLink>(`/api/public/links/${token}/meta`, fetcher, {
     shouldRetryOnError: false,
   });
   const isDir = meta?.isDir;
   const { data: listing } = useSWR<Listing>(
-    isDir ? `/api/shares/${token}/list?sub=${enc(sub)}` : null,
+    isDir ? `/api/public/links/${token}/list?sub=${enc(sub)}` : null,
     fetcher,
     { keepPreviousData: true }
   );
 
-  if (metaError instanceof ApiError && metaError.status === 401) {
-    router.replace(`/login`);
-    return null;
-  }
+  const streamFor = (e: Entry) => `/api/public/links/${token}/stream?sub=${enc(e.path)}`;
+  const downloadFor = (e: Entry) => `/api/public/links/${token}/download?sub=${enc(e.path)}`;
 
-  const streamFor = (e: Entry) => `/api/shares/${token}/stream?sub=${enc(e.path)}`;
-  const downloadFor = (e: Entry) => `/api/shares/${token}/download?sub=${enc(e.path)}`;
-
-  const entries = listing?.entries ?? [];
-  const previewables = entries.filter((e) => !e.isDir && PREVIEWABLE.has(e.kind));
+  const entries = useMemo(() => listing?.entries ?? [], [listing]);
+  const previewables = useMemo(() => entries.filter((e) => !e.isDir && PREVIEWABLE.has(e.kind)), [entries]);
 
   const crumbs = useMemo(() => {
     const parts = sub ? sub.split("/") : [];
@@ -66,34 +57,22 @@ export default function SharedItemPage({ params }: { params: Promise<{ token: st
         <span className="grid size-9 place-items-center rounded-xl bg-accent text-accent-foreground">
           <Cloud className="size-5" />
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{meta?.name ?? "Shared item"}</p>
-          <p className="text-xs text-muted">
-            {meta ? `Shared by ${meta.createdBy}` : "Checking access…"}
-            {me ? ` · signed in as ${me.email}` : ""}
-          </p>
+          <p className="truncate text-xs text-muted">{meta ? `Shared by ${meta.createdBy}` : "Opening…"}</p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          {me?.canBrowse && (
-            <Button size="sm" variant="ghost" onPress={() => router.push("/")}>
-              Open my drive
-            </Button>
-          )}
-          {meta && (
-            <Button
-              size="sm"
-              variant="primary"
-              onPress={() => {
-                const a = document.createElement("a");
-                a.href = `/api/shares/${token}/download${isDir && sub ? `?sub=${enc(sub)}` : ""}`;
-                a.click();
-              }}
-            >
-              <Download className="size-4" />
-              Download{isDir ? " .zip" : ""}
-            </Button>
-          )}
-        </div>
+        {meta && (
+          <Button
+            size="sm"
+            variant="primary"
+            onPress={() =>
+              triggerDownload(`/api/public/links/${token}/download${isDir && sub ? `?sub=${enc(sub)}` : ""}`)
+            }
+          >
+            <Download className="size-4" />
+            <span className="hidden sm:inline">Download{isDir ? " .zip" : ""}</span>
+          </Button>
+        )}
       </header>
 
       <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6">
@@ -103,17 +82,17 @@ export default function SharedItemPage({ params }: { params: Promise<{ token: st
           </div>
         )}
 
-        {metaError && !(metaError instanceof ApiError && metaError.status === 401) && (
+        {metaError && (
           <div className="grid place-items-center py-24 text-center">
             <div className="max-w-sm">
               <div className="mx-auto mb-4 grid size-16 place-items-center rounded-2xl bg-danger/10">
                 <Lock className="size-8 text-danger" />
               </div>
-              <p className="text-lg font-medium">You can&apos;t open this</p>
+              <p className="text-lg font-medium">This link isn&apos;t available</p>
               <p className="mt-1 text-sm leading-relaxed text-muted">
-                {metaError instanceof ApiError && metaError.status === 403
-                  ? "This item wasn't shared with your account. Ask the person who sent the link to add you."
-                  : "This link is invalid, expired, or the item was removed."}
+                {metaError instanceof ApiError && metaError.status === 404
+                  ? "The link is invalid, has expired, or the item was removed."
+                  : "Something went wrong opening this link. Please try again."}
               </p>
             </div>
           </div>
@@ -125,7 +104,11 @@ export default function SharedItemPage({ params }: { params: Promise<{ token: st
             <div className="w-full max-w-3xl overflow-hidden rounded-2xl border border-default bg-surface">
               <div className="grid min-h-[50vh] place-items-center p-4">
                 {PREVIEWABLE.has(meta.kind) ? (
-                  <InlineFilePreview entry={selfEntry} src={`/api/shares/${token}/stream`} textUrl={meta.kind === "text" ? `/api/shares/${token}/stream` : null} />
+                  <InlineFilePreview
+                    entry={selfEntry}
+                    src={`/api/public/links/${token}/stream`}
+                    textUrl={meta.kind === "text" ? `/api/public/links/${token}/stream` : null}
+                  />
                 ) : (
                   <div className="flex flex-col items-center gap-4 py-10 text-center">
                     <ItemIcon kind={meta.kind} className="size-16" />
@@ -165,15 +148,14 @@ export default function SharedItemPage({ params }: { params: Promise<{ token: st
                     key={e.path}
                     role="button"
                     tabIndex={0}
-                    onDoubleClick={() => {
-                      if (e.isDir) setSub(e.path);
-                      else {
-                        const idx = previewables.findIndex((p) => p.path === e.path);
-                        if (idx >= 0) setPreview({ entries: previewables, index: idx });
-                      }
-                    }}
                     onClick={() => {
                       if (e.isDir) setSub(e.path);
+                      else if (PREVIEWABLE.has(e.kind)) {
+                        const idx = previewables.findIndex((p) => p.path === e.path);
+                        if (idx >= 0) setPreview({ entries: previewables, index: idx });
+                      } else {
+                        triggerDownload(downloadFor(e));
+                      }
                     }}
                     className="grid cursor-pointer grid-cols-[1fr_auto] items-center gap-3 border-b border-default/60 px-4 py-2.5 last:border-b-0 hover:bg-foreground/5 sm:grid-cols-[1fr_110px_130px_auto]"
                   >
@@ -205,11 +187,7 @@ export default function SharedItemPage({ params }: { params: Promise<{ token: st
                         variant="ghost"
                         isIconOnly
                         aria-label="Download"
-                        onPress={() => {
-                          const a = document.createElement("a");
-                          a.href = downloadFor(e);
-                          a.click();
-                        }}
+                        onPress={() => triggerDownload(downloadFor(e))}
                       >
                         <Download className="size-4" />
                       </Button>

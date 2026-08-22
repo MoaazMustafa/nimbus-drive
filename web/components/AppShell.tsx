@@ -8,22 +8,23 @@ import { Avatar, Button, Dropdown, Label, Tooltip } from "@heroui/react";
 import {
   Cloud,
   HardDrive,
-  Users,
   Link2,
+  Trash2,
   ShieldCheck,
   Sun,
   Moon,
   LogOut,
   Menu as MenuIcon,
+  Download,
 } from "lucide-react";
 import { api, formatBytes } from "@/lib/api";
 import { useMe, useStats } from "@/lib/hooks";
 import { SearchBox } from "./SearchBox";
 
 const NAV = [
-  { href: "/", label: "My Drive", icon: HardDrive, needsBrowse: true },
-  { href: "/shared", label: "Shared with me", icon: Users, needsBrowse: false },
-  { href: "/links", label: "My links", icon: Link2, needsBrowse: true },
+  { href: "/", label: "My Drive", icon: HardDrive },
+  { href: "/links", label: "Links", icon: Link2 },
+  { href: "/trash", label: "Trash", icon: Trash2 },
   { href: "/admin", label: "Admin", icon: ShieldCheck, adminOnly: true },
 ];
 
@@ -49,11 +50,41 @@ function ThemeToggle() {
   );
 }
 
+/** Shows an "Install" button when the browser offers to install the PWA. */
+function InstallButton() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [deferred, setDeferred] = useState<any>(null);
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handler = (e: any) => {
+      e.preventDefault();
+      setDeferred(e);
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+  if (!deferred) return null;
+  return (
+    <Button
+      size="sm"
+      variant="secondary"
+      onPress={async () => {
+        deferred.prompt();
+        await deferred.userChoice.catch(() => {});
+        setDeferred(null);
+      }}
+    >
+      <Download className="size-4" />
+      <span className="hidden sm:inline">Install</span>
+    </Button>
+  );
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { me } = useMe();
   const pathname = usePathname();
   const router = useRouter();
-  const { data: stats } = useStats(!!me?.canBrowse);
+  const { data: stats } = useStats(!!me);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const appName = me?.appName || process.env.NEXT_PUBLIC_APP_NAME || "Nimbus Drive";
@@ -66,22 +97,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const nav = NAV.filter((n) => {
-    if (n.adminOnly && !me?.isAdmin) return false;
-    if (n.needsBrowse && me && !me.canBrowse) return false;
-    return true;
-  });
+  const nav = NAV.filter((n) => !(n.adminOnly && !me?.isAdmin));
 
   return (
     <div className="flex min-h-dvh w-full">
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-[var(--nimbus-sidebar-w)] shrink-0 border-r border-default bg-surface/60 backdrop-blur-md transition-transform lg:static lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 w-[var(--nimbus-sidebar-w)] shrink-0 border-r border-default bg-surface/80 backdrop-blur-md transition-transform lg:static lg:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div className="flex h-full flex-col gap-2 p-4">
-          <Link href="/" className="mb-2 flex items-center gap-2.5 px-2 py-1">
+          <Link href="/" className="mb-2 flex items-center gap-2.5 px-2 py-1" onClick={() => setSidebarOpen(false)}>
             <span className="grid size-9 place-items-center rounded-xl bg-accent text-accent-foreground shadow-sm">
               <Cloud className="size-5" />
             </span>
@@ -110,14 +137,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
 
           <div className="mt-auto">
-            {me?.canBrowse && stats && (
+            {stats && (
               <div className="rounded-xl border border-default bg-background/60 p-3">
-                <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                  <span>Storage</span>
-                  <span>{formatBytes(stats.bytes)}</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10">
-                  <div className="h-full w-full rounded-full bg-accent/70" />
+                <div className="flex items-center justify-between text-xs text-muted">
+                  <span>Storage used</span>
+                  <span className="font-medium text-foreground">{formatBytes(stats.bytes)}</span>
                 </div>
                 <p className="mt-1.5 text-xs text-muted">
                   {stats.files.toLocaleString()} files · {stats.folders.toLocaleString()} folders
@@ -140,7 +164,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-default bg-background/80 px-4 py-3 backdrop-blur-md">
+        <header className="sticky top-0 z-20 flex items-center gap-2 border-b border-default bg-background/80 px-3 py-3 backdrop-blur-md sm:gap-3 sm:px-4">
           <Button
             isIconOnly
             variant="ghost"
@@ -152,9 +176,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <MenuIcon className="size-5" />
           </Button>
 
-          {me?.canBrowse ? <SearchBox /> : <div className="flex-1" />}
+          <SearchBox />
 
           <div className="ml-auto flex items-center gap-1.5">
+            <InstallButton />
             <ThemeToggle />
             {me && (
               <Dropdown>

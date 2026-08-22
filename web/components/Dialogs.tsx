@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
-import { Button, Input, Label, Modal, TextField, toast } from "@heroui/react";
+import { Button, Input, Modal, TextField, toast } from "@heroui/react";
 import { ChevronLeft, Folder, FolderPlus, CornerDownRight } from "lucide-react";
 import { api, enc, fetcher, parentOf } from "@/lib/api";
 import type { Entry, Listing } from "@/lib/types";
@@ -164,21 +164,25 @@ export function RenameDialog({
 export function DeleteDialog({
   isOpen,
   onOpenChange,
-  entry,
+  entries,
   onDone,
 }: {
   isOpen: boolean;
   onOpenChange: (o: boolean) => void;
-  entry: Entry | null;
+  entries: Entry[];
   onDone: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const many = entries.length > 1;
+  const title = many ? `Delete ${entries.length} items?` : `Delete "${entries[0]?.name}"?`;
 
   async function doDelete() {
-    if (!entry) return;
+    if (entries.length === 0) return;
     setBusy(true);
     try {
-      const res = await api<{ trashed: boolean }>("/api/fs/delete", { json: { paths: [entry.path] } });
+      const res = await api<{ trashed: boolean }>("/api/fs/delete", {
+        json: { paths: entries.map((e) => e.path) },
+      });
       toast.success(res.trashed ? "Moved to trash" : "Deleted");
       onDone();
       onOpenChange(false);
@@ -190,14 +194,15 @@ export function DeleteDialog({
   }
 
   return (
-    <BaseDialog isOpen={isOpen} onOpenChange={onOpenChange} title={`Delete "${entry?.name}"?`}>
+    <BaseDialog isOpen={isOpen} onOpenChange={onOpenChange} title={title}>
       <Modal.Body>
         <p className="text-sm text-muted">
-          {entry?.isDir
-            ? "The folder and everything inside it will be removed from the drive."
-            : "The file will be removed from the drive."}{" "}
-          It is kept in the server&apos;s trash folder as a safety net, and any share links to it will stop
-          working.
+          {many
+            ? "The selected items will be removed from the drive."
+            : entries[0]?.isDir
+              ? "The folder and everything inside it will be removed from the drive."
+              : "The file will be removed from the drive."}{" "}
+          Items are kept in the Trash so you can restore them, and any public links to them will stop working.
         </p>
       </Modal.Body>
       <Modal.Footer>
@@ -205,7 +210,7 @@ export function DeleteDialog({
           Cancel
         </Button>
         <Button variant="danger" isPending={busy} onPress={doDelete}>
-          Delete
+          {many ? `Delete ${entries.length}` : "Delete"}
         </Button>
       </Modal.Footer>
     </BaseDialog>
@@ -215,39 +220,41 @@ export function DeleteDialog({
 export function MoveDialog({
   isOpen,
   onOpenChange,
-  entry,
+  entries,
   onDone,
 }: {
   isOpen: boolean;
   onOpenChange: (o: boolean) => void;
-  entry: Entry | null;
+  entries: Entry[];
   onDone: () => void;
 }) {
   const [dir, setDir] = useState("");
   const [busy, setBusy] = useState(false);
+  const first = entries[0] ?? null;
   useEffect(() => {
-    if (isOpen && entry) setDir(parentOf(entry.path));
-  }, [isOpen, entry]);
+    if (isOpen && first) setDir(parentOf(first.path));
+  }, [isOpen, first]);
 
-  const { data } = useSWR<Listing>(
-    isOpen ? `/api/fs/list?path=${enc(dir)}` : null,
-    fetcher,
-    { keepPreviousData: true }
-  );
+  const { data } = useSWR<Listing>(isOpen ? `/api/fs/list?path=${enc(dir)}` : null, fetcher, {
+    keepPreviousData: true,
+  });
+  const selectedPaths = useMemo(() => new Set(entries.map((e) => e.path)), [entries]);
   const folders = useMemo(
-    () => (data?.entries ?? []).filter((e) => e.isDir && e.path !== entry?.path),
-    [data, entry]
+    () => (data?.entries ?? []).filter((e) => e.isDir && !selectedPaths.has(e.path)),
+    [data, selectedPaths]
   );
+
+  const commonParent = first ? parentOf(first.path) : "";
   const invalid =
-    !entry ||
-    dir === parentOf(entry.path) ||
-    (entry.isDir && (dir === entry.path || dir.startsWith(entry.path + "/")));
+    entries.length === 0 ||
+    dir === commonParent ||
+    entries.some((e) => e.isDir && (dir === e.path || dir.startsWith(e.path + "/")));
 
   async function move() {
-    if (!entry) return;
+    if (entries.length === 0) return;
     setBusy(true);
     try {
-      await api("/api/fs/move", { json: { paths: [entry.path], destDir: dir } });
+      await api("/api/fs/move", { json: { paths: entries.map((e) => e.path), destDir: dir } });
       toast.success(`Moved to /${dir || "My Drive"}`);
       onDone();
       onOpenChange(false);
@@ -258,8 +265,10 @@ export function MoveDialog({
     }
   }
 
+  const title = entries.length > 1 ? `Move ${entries.length} items` : `Move "${first?.name}"`;
+
   return (
-    <BaseDialog isOpen={isOpen} onOpenChange={onOpenChange} title={`Move "${entry?.name}"`} size="md">
+    <BaseDialog isOpen={isOpen} onOpenChange={onOpenChange} title={title} size="md">
       <Modal.Body>
         <div className="mb-2 flex items-center gap-2 text-sm">
           <Button
