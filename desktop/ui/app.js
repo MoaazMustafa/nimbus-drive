@@ -456,23 +456,53 @@ nim.onLog(({ proc, entry }) => {
 
 /* ── settings ────────────────────────────────────────── */
 const ENV_FIELDS = ["APP_NAME", "STORAGE_ROOT", "ADMIN_EMAIL", "BASE_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"];
+
+function updateTunnelUI() {
+  const enabled = $("f-tunnelEnabled").checked;
+  const mode = $("f-tunnelMode").value;
+  $("tunnel-options").classList.toggle("hidden", !enabled);
+  $("group-tunnelToken").classList.toggle("hidden", mode !== "token");
+  $("group-tunnelName").classList.toggle("hidden", mode !== "named");
+}
+
 async function loadConfigIntoForm() {
   const cfg = await nim.getConfig();
   for (const k of ENV_FIELDS) $(`f-${k}`).value = cfg.env[k] ?? "";
   $("f-tunnelEnabled").checked = !!cfg.app.config.tunnelEnabled;
+  $("f-tunnelMode").value = cfg.app.config.tunnelMode || "quick";
+  $("f-tunnelToken").value = cfg.app.config.tunnelToken || "";
   $("f-tunnelName").value = cfg.app.config.tunnelName || "nimbus";
   $("f-cloudflaredPath").value = cfg.app.config.cloudflaredPath || "cloudflared";
   $("f-startServicesOnLaunch").checked = !!cfg.app.config.startServicesOnLaunch;
   $("f-openAtLogin").checked = !!cfg.app.config.openAtLogin;
+  updateTunnelUI();
   updateRedirectUri();
 }
 function updateRedirectUri() {
   const base = $("f-BASE_URL").value.trim().replace(/\/+$/, "");
-  $("redirect-uri").textContent = base ? `${base}/api/auth/callback/google` : "—";
+  const uri = base ? `${base}/api/auth/callback/google` : "—";
+  $("redirect-uri").textContent = uri;
+  if ($("modal-redirect-uri")) $("modal-redirect-uri").textContent = uri;
 }
+
+$("f-tunnelEnabled").addEventListener("change", updateTunnelUI);
+$("f-tunnelMode").addEventListener("change", updateTunnelUI);
 $("f-BASE_URL").addEventListener("input", updateRedirectUri);
 $("btn-copy-uri").addEventListener("click", () => copyText($("redirect-uri").textContent));
 $("link-google").addEventListener("click", () => nim.openLink("google-console"));
+if ($("modal-link-google")) $("modal-link-google").addEventListener("click", () => nim.openLink("google-console"));
+
+/* Google OAuth Help Modal */
+if ($("btn-google-help")) {
+  $("btn-google-help").addEventListener("click", () => {
+    updateRedirectUri();
+    $("modal-google-help").classList.remove("hidden");
+  });
+  $("btn-close-google-help").addEventListener("click", () => $("modal-google-help").classList.add("hidden"));
+  $("btn-done-google-help").addEventListener("click", () => $("modal-google-help").classList.add("hidden"));
+  $("btn-modal-copy-uri").addEventListener("click", () => copyText($("modal-redirect-uri").textContent));
+}
+
 $("btn-pick-storage").addEventListener("click", async () => {
   const dir = await nim.pickFolder($("f-STORAGE_ROOT").value.trim() || null);
   if (dir) $("f-STORAGE_ROOT").value = dir;
@@ -489,42 +519,57 @@ $("btn-save").addEventListener("click", async () => {
   btn.disabled = true;
   $("save-status").textContent = "Saving…";
   $("form-errors").classList.add("hidden");
-  const env = {};
-  for (const k of ENV_FIELDS) env[k] = $(`f-${k}`).value.trim();
-  const res = await nim.saveConfig({
-    env,
-    app: {
-      tunnelEnabled: $("f-tunnelEnabled").checked,
-      tunnelName: $("f-tunnelName").value.trim() || "nimbus",
-      cloudflaredPath: $("f-cloudflaredPath").value.trim() || "cloudflared",
-      startServicesOnLaunch: $("f-startServicesOnLaunch").checked,
-      openAtLogin: $("f-openAtLogin").checked,
-    },
-  });
-  btn.disabled = false;
-  if (!res.ok) {
-    $("save-status").textContent = "";
-    $("form-errors").textContent = res.problems.map((p) => `• ${p.message}`).join("\n");
-    $("form-errors").classList.remove("hidden");
-    return;
-  }
-  state = res.state;
-  render();
-  if (res.restartNeeded) {
-    $("save-status").textContent = "Saved — restarting to apply…";
-    state = await nim.restart();
+  try {
+    const env = {};
+    for (const k of ENV_FIELDS) env[k] = $(`f-${k}`).value.trim();
+    const res = await nim.saveConfig({
+      env,
+      app: {
+        tunnelEnabled: $("f-tunnelEnabled").checked,
+        tunnelMode: $("f-tunnelMode").value,
+        tunnelToken: $("f-tunnelToken").value.trim(),
+        tunnelName: $("f-tunnelName").value.trim() || "nimbus",
+        cloudflaredPath: $("f-cloudflaredPath").value.trim() || "cloudflared",
+        startServicesOnLaunch: $("f-startServicesOnLaunch").checked,
+        openAtLogin: $("f-openAtLogin").checked,
+      },
+    });
+    if (!res.ok) {
+      $("save-status").textContent = "Error saving";
+      $("form-errors").textContent = res.problems.map((p) => `• ${p.message}`).join("\n");
+      $("form-errors").classList.remove("hidden");
+      return;
+    }
+    state = res.state;
     render();
-    $("save-status").textContent = "Saved and applied ✓";
-  } else if (!state.running && state.env.configured) {
-    $("save-status").textContent = "Saved — starting your drive…";
-    state = await nim.start();
-    render();
-    $("save-status").textContent = state.overall === "degraded" ? "Saved, but something failed — see Overview." : "Saved ✓ your drive is starting";
-    switchTab("overview");
-  } else {
-    $("save-status").textContent = "Saved ✓";
+    if (res.restartNeeded) {
+      $("save-status").textContent = "Saved — restarting to apply…";
+      try {
+        state = await nim.restart();
+        render();
+        $("save-status").textContent = "Saved and applied ✓";
+      } catch (err) {
+        $("save-status").textContent = "Saved, restart failed: " + err.message;
+      }
+    } else if (!state.running && state.env.configured) {
+      $("save-status").textContent = "Saved — starting your drive…";
+      try {
+        state = await nim.start();
+        render();
+        $("save-status").textContent = state.overall === "degraded" ? "Saved, but something failed — see Overview." : "Saved ✓ your drive is starting";
+        switchTab("overview");
+      } catch (err) {
+        $("save-status").textContent = "Saved, start failed: " + err.message;
+      }
+    } else {
+      $("save-status").textContent = "Saved ✓";
+    }
+    setTimeout(() => { $("save-status").textContent = ""; }, 6000);
+  } catch (err) {
+    $("save-status").textContent = "Save failed: " + err.message;
+  } finally {
+    btn.disabled = false;
   }
-  setTimeout(() => { $("save-status").textContent = ""; }, 6000);
 });
 
 /* ── header actions ──────────────────────────────────── */

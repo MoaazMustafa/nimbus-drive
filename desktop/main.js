@@ -66,6 +66,24 @@ function saveConfig() {
   } catch { /* best-effort */ }
 }
 
+function configureWindowsStartup(enable) {
+  if (process.platform !== 'win32') return;
+  const startupDir = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
+  const vbsPath = path.join(startupDir, 'NimbusDriveAutoStart.vbs');
+  if (enable) {
+    try {
+      const exePath = app.getPath('exe');
+      const vbsContent = `Set WshShell = CreateObject("WScript.Shell")\r\nWshShell.Run """" & "${exePath.replace(/\\/g, '\\\\')}" & """ --hidden --autostart", 0, False\r\n`;
+      fs.mkdirSync(startupDir, { recursive: true });
+      fs.writeFileSync(vbsPath, vbsContent, 'utf8');
+    } catch { /* best-effort */ }
+  } else {
+    try {
+      if (fs.existsSync(vbsPath)) fs.unlinkSync(vbsPath);
+    } catch { /* best-effort */ }
+  }
+}
+
 // ── globals ─────────────────────────────────────────────────────────
 let win = null;
 let tray = null;
@@ -596,13 +614,15 @@ function registerIpc() {
           }
         }
       }
-      for (const k of ['tunnelEnabled', 'tunnelName', 'cloudflaredPath', 'startServicesOnLaunch']) {
+
+      for (const k of ['tunnelEnabled', 'tunnelMode', 'tunnelName', 'tunnelToken', 'cloudflaredPath', 'startServicesOnLaunch']) {
         if (k in appValues) appConfig[k] = appValues[k];
       }
       saveConfig();
       if ('openAtLogin' in appValues) {
-        const args = app.isPackaged ? ['--hidden'] : [path.resolve(__dirname), '--hidden'];
+        const args = app.isPackaged ? ['--hidden', '--autostart'] : [path.resolve(__dirname), '--hidden', '--autostart'];
         app.setLoginItemSettings({ openAtLogin: !!appValues.openAtLogin, args });
+        configureWindowsStartup(!!appValues.openAtLogin);
       }
     }
     pushState();

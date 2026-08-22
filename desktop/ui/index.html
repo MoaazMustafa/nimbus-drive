@@ -147,11 +147,15 @@
           </label>
           <label>Owner Google email<input id="f-ADMIN_EMAIL" type="email" placeholder="you@gmail.com" /></label>
           <label>Base URL <span class="hint">http://localhost:3000 locally, or your https:// domain</span><input id="f-BASE_URL" type="text" class="mono" /></label>
-          <label>Google Client ID<input id="f-GOOGLE_CLIENT_ID" type="text" class="mono" /></label>
+          <div class="row items-center justify-between mt-2">
+            <label>Google Client ID</label>
+            <button id="btn-google-help" type="button" class="btn ghost small">ℹ How to get Google Keys?</button>
+          </div>
+          <input id="f-GOOGLE_CLIENT_ID" type="text" class="mono" placeholder="12345...apps.googleusercontent.com" />
           <label>Google Client Secret
             <span class="row">
               <input id="f-GOOGLE_CLIENT_SECRET" type="password" class="mono" />
-              <button id="btn-reveal" class="btn ghost">Show</button>
+              <button id="btn-reveal" type="button" class="btn ghost">Show</button>
             </span>
           </label>
         </div>
@@ -163,15 +167,30 @@
       </div>
 
       <div class="card">
-        <h2>Desktop app</h2>
+        <h2>Desktop app & Remote Access</h2>
         <div class="form">
-          <label class="check big"><input type="checkbox" id="f-tunnelEnabled" /> Run the Cloudflare Tunnel with the drive <span class="hint">(downloaded automatically if needed; SETUP.md §5 for the one-time tunnel login)</span></label>
-          <div class="row indent">
-            <label class="grow">Tunnel name<input id="f-tunnelName" type="text" class="mono" /></label>
-            <label class="grow">cloudflared path<input id="f-cloudflaredPath" type="text" class="mono" /></label>
+          <label class="check big"><input type="checkbox" id="f-tunnelEnabled" /> Enable Cloudflare Tunnel <span class="hint">(Expose your drive securely to the internet without port forwarding)</span></label>
+          <div id="tunnel-options" class="indent form">
+            <label>Tunnel Mode
+              <select id="f-tunnelMode" class="mono">
+                <option value="quick">Quick Tunnel (Instant free trycloudflare.com URL)</option>
+                <option value="token">Permanent Custom Domain (Cloudflare Zero Trust Tunnel Token)</option>
+                <option value="named">Named Tunnel (cloudflared login / named tunnel)</option>
+              </select>
+            </label>
+            <div id="group-tunnelToken" class="hidden">
+              <label>Cloudflare Tunnel Token <span class="hint">Paste your token from Cloudflare Zero Trust Dashboard</span>
+                <input id="f-tunnelToken" type="password" class="mono" placeholder="eyJh..." />
+              </label>
+            </div>
+            <div id="group-tunnelName" class="hidden">
+              <label>Tunnel name<input id="f-tunnelName" type="text" class="mono" placeholder="nimbus" /></label>
+            </div>
+            <label>cloudflared binary path<input id="f-cloudflaredPath" type="text" class="mono" placeholder="cloudflared" /></label>
           </div>
-          <label class="check big"><input type="checkbox" id="f-startServicesOnLaunch" /> Start the drive when this app opens</label>
-          <label class="check big"><input type="checkbox" id="f-openAtLogin" /> Open this app (hidden, in the tray) when I sign in to Windows</label>
+          <hr class="divider" />
+          <label class="check big"><input type="checkbox" id="f-startServicesOnLaunch" /> Start drive services automatically when this app opens</label>
+          <label class="check big"><input type="checkbox" id="f-openAtLogin" /> Start drive automatically on Windows boot (Background Service)</label>
         </div>
       </div>
 
@@ -180,6 +199,48 @@
         <span id="save-status" class="muted"></span>
       </div>
     </main>
+  </div>
+
+  <!-- Modal: Google OAuth Setup Guide -->
+  <div id="modal-google-help" class="modal-overlay hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>How to get Google Client ID & Secret</h3>
+        <button id="btn-close-google-help" class="btn ghost icon-only">&times;</button>
+      </div>
+      <div class="modal-body">
+        <ol class="help-steps">
+          <li>
+            <strong>1. Open Google Cloud Console</strong>
+            <p>Go to <span id="modal-link-google" class="linklike">Google Cloud Console → Credentials</span> and sign in with your Google account.</p>
+          </li>
+          <li>
+            <strong>2. Create a Project</strong>
+            <p>Click the project dropdown at the top bar and select <em>New Project</em>. Name it (e.g. <code>My Nimbus Drive</code>) and click Create.</p>
+          </li>
+          <li>
+            <strong>3. Configure OAuth Consent Screen</strong>
+            <p>In the left navigation menu, click <em>OAuth consent screen</em>. Choose <strong>External</strong>, fill in your App name and user support email, then click <em>Save and Continue</em>.</p>
+          </li>
+          <li>
+            <strong>4. Create OAuth 2.0 Credentials</strong>
+            <p>Click <em>Credentials</em> → <em>Create Credentials</em> → <em>OAuth client ID</em>. Choose Application type: <strong>Web application</strong>.</p>
+          </li>
+          <li>
+            <strong>5. Add Authorized Redirect URI</strong>
+            <p>Under <em>Authorized redirect URIs</em>, click <strong>Add URI</strong> and paste your callback URI:</p>
+            <p class="row mt-1"><code id="modal-redirect-uri" class="mono grow"></code><button id="btn-modal-copy-uri" class="btn ghost small">Copy</button></p>
+          </li>
+          <li>
+            <strong>6. Copy Keys into Nimbus</strong>
+            <p>Click <em>Create</em>. Copy the generated <strong>Client ID</strong> and <strong>Client Secret</strong> into Nimbus Desktop and click <strong>Save</strong>!</p>
+          </li>
+        </ol>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-done-google-help" class="btn primary">Got it!</button>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>
