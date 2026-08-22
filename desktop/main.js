@@ -29,6 +29,7 @@ const { readEnv, updateEnv, createEnv, validateEnvValues, redirectUri } = requir
 const { Bootstrap } = require('./lib/bootstrap');
 const { GitHub, parseRepo } = require('./lib/github');
 const { ensureNode, ensureCloudflared } = require('./lib/runtime');
+const { runDiagnostics } = require('./lib/verify');
 
 // The home of this app: where installs and updates come from. Baked in so a
 // new user never has to know or type it — Setup.exe → Install → done.
@@ -559,6 +560,27 @@ function relaunchApp() {
     }
   });
 
+  // Full domain + browser-sign-in verification, on demand.
+  ipcMain.handle('verify:run', async () => {
+    try {
+      const env = supervisor?.env() || readEnv(envPath()) || {};
+      return {
+        ok: true,
+        report: await runDiagnostics({
+          env,
+          apiPort: supervisor?.apiPort,
+          webPort: supervisor?.webPort,
+          tunnelEnabled: appConfig.tunnelEnabled,
+          tunnelMode: appConfig.tunnelMode,
+          projectRoot,
+          homeDir: os.homedir(),
+        }),
+      };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('open:releases', () => {
     return shell.openExternal(`https://github.com/${appConfig.repo || DEFAULT_REPO}/releases/latest`);
   });
@@ -611,9 +633,20 @@ function relaunchApp() {
       const problems = validateEnvValues(envValues, { projectRoot: projectRoot || homeDir() });
       if (problems.length) return { ok: false, problems };
       const defaults = isBootstrap() ? { DATA_DIR: path.join(homeDir(), 'data') } : {};
-      if (fs.existsSync(p)) updateEnv(p, envValues);
-      else createEnv(p, { ...defaults, ...envValues });
-      if (isBootstrap() && projectRoot) await bootstrap.materializeEnv(projectRoot);
+      // Never let a write failure reject the IPC — the UI must be able to show
+      // WHY saving failed (missing folder, permissions, file locked by OneDrive…).
+      try {
+        if (fs.existsSync(p)) updateEnv(p, envValues);
+        else createEnv(p, { ...defaults, ...envValues });
+        if (isBootstrap() && projectRoot) await bootstrap.materializeEnv(projectRoot);
+      } catch (err) {
+        const why = err.code === 'EACCES' || err.code === 'EPERM'
+          ? 'the file is locked or not writable (close any editor, or check OneDrive sync)'
+          : err.code === 'ENOENT'
+            ? 'the settings folder could not be created'
+            : err.message;
+        return { ok: false, problems: [{ field: '', message: `Could not save settings to ${p} — ${why}` }] };
+      }
     }
     if (appValues) {
       // auto-fetch cloudflared for bootstrap users the first time they enable the tunnel

@@ -22,6 +22,11 @@ function parseEnvText(text) {
   return values;
 }
 
+/** Make sure the folder holding the .env exists before any write. */
+function ensureEnvDir(envPath) {
+  fs.mkdirSync(path.dirname(envPath), { recursive: true });
+}
+
 function readEnv(envPath) {
   if (!fs.existsSync(envPath)) return null;
   return parseEnvText(fs.readFileSync(envPath, 'utf8'));
@@ -47,6 +52,7 @@ function updateEnv(envPath, updates) {
     if (out.length && out[out.length - 1].trim() !== '') out.push('');
     for (const [k, v] of extras) out.push(`${k}=${v}`);
   }
+  ensureEnvDir(envPath);
   fs.writeFileSync(envPath, out.join(eol));
   return readEnv(envPath);
 }
@@ -83,6 +89,7 @@ MAX_UPLOAD_MB=${v.MAX_UPLOAD_MB || 4096}
 TRASH_ENABLED=${v.TRASH_ENABLED || 'true'}
 WATCH_POLLING=${v.WATCH_POLLING || 'false'}
 `;
+  ensureEnvDir(envPath);
   fs.writeFileSync(envPath, text);
   return readEnv(envPath);
 }
@@ -132,4 +139,4 @@ function redirectUri(baseUrl) {
   return `${String(baseUrl || '').replace(/\/+$/, '')}/api/auth/callback/google`;
 }
 
-module.exports = { parseEnvText, readEnv, updateEnv, createEnv, validateEnvValues, redirectUri };
+module.exports = { parseEnvText, readEnv, updateEnv, createEnv, validateEnvValues, redirectUri, ensureEnvDir };

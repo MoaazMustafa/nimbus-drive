@@ -587,6 +587,68 @@ $("banner-close").addEventListener("click", () => {
   $("banner").classList.add("hidden");
 });
 
+/* ── domain & sign-in verification ───────────────────── */
+const VERDICT_PILL = {
+  ok: ["green", "all good"],
+  warn: ["yellow", "needs attention"],
+  fail: ["red", "problem found"],
+};
+function renderVerify(report) {
+  const list = $("verify-list");
+  const verdict = $("verify-verdict");
+  if (!list || !verdict) return;
+  const [cls, label] = VERDICT_PILL[report.overall] || ["gray", report.overall];
+  verdict.className = `pill ${cls}`;
+  verdict.textContent = label;
+  verdict.classList.remove("hidden");
+
+  list.textContent = "";
+  list.classList.remove("hidden");
+  const MARK = { ok: "✓", fail: "✗", warn: "!", skip: "–" };
+  for (const c of report.checks) {
+    const li = document.createElement("li");
+    li.className = c.status;
+    const mark = document.createElement("span");
+    mark.className = `mark ${c.status}`;
+    mark.textContent = MARK[c.status] || "·";
+    const head = document.createElement("span");
+    head.className = "head";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = c.label;
+    const why = document.createElement("span");
+    why.className = "why";
+    why.textContent = c.detail || "";
+    head.append(name, why);
+    li.append(mark, head);
+    if (c.fix && (c.status === "fail" || c.status === "warn")) {
+      const fix = document.createElement("span");
+      fix.className = "fix";
+      fix.textContent = c.fix;
+      li.append(fix);
+    }
+    list.append(li);
+  }
+}
+if ($("btn-verify")) {
+  $("btn-verify").addEventListener("click", async () => {
+    const btn = $("btn-verify");
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    $("verify-verdict")?.classList.add("hidden");
+    try {
+      const res = await nim.verifyDomain();
+      if (res.ok) renderVerify(res.report);
+      else renderVerify({ overall: "fail", checks: [{ id: "err", label: "Verification", status: "fail", detail: res.error || "could not run", fix: null }] });
+    } catch (err) {
+      renderVerify({ overall: "fail", checks: [{ id: "err", label: "Verification", status: "fail", detail: String(err.message || err), fix: null }] });
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Verify now";
+    }
+  });
+}
+
 /* ── boot ────────────────────────────────────────────── */
 nim.onState((s) => {
   state = s;

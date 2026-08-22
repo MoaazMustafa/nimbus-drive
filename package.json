@@ -1,7 +1,7 @@
 {
   "name": "nimbus-drive",
   "version": "1.0.0",
-  "description": "Self-hosted personal cloud drive — your files on your own machine, from anywhere",
+  "description": "Self-hosted personal cloud drive \u2014 your files on your own machine, from anywhere",
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "install:all": "npm install && npm --prefix server install && npm --prefix web install",
@@ -14,7 +14,8 @@
     "mock:google": "node scripts/dev/mock-google.mjs",
     "desktop:install": "npm --prefix desktop install",
     "desktop": "npm --prefix desktop start",
-    "desktop:dist": "npm --prefix desktop run dist"
+    "desktop:dist": "npm --prefix desktop run dist",
+    "test:verify": "node scripts/dev/verify-test.mjs"
   },
   "private": "true",
   "devDependencies": {

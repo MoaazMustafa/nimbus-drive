@@ -84,6 +84,27 @@ First time:
 
 Next releases: commit, tag, push the tag. Users click **Update now**.
 
+## Verify domain & sign-in (Overview → "Verify now")
+
+One button answers the two questions that actually matter when family members
+report "it won't load" or "I can't sign in". It checks, in order:
+
+| Check | What it proves |
+|---|---|
+| Drive address | Base URL is a real https domain (not localhost, not http) |
+| Drive engine / Website | the API and the site are healthy **on this PC** |
+| Domain name | the hostname resolves in DNS |
+| Tunnel routing | cloudflared routes *your* hostname to the port the site is really on |
+| Reachable from the internet | `https://your-domain/api/health` answers **and reports this same PC** — not another machine |
+| Google sign-in keys | Client ID + Secret are present |
+| Sign-in hand-off | the live site sends browsers to Google with the exact right return address |
+| Google accepts this address | Google itself is asked — catches `redirect_uri_mismatch` **before** a family member hits it |
+
+Every failure comes with the specific fix (the exact URI to paste into Google
+Console, the port to correct in `config.yml`, the CNAME to create). Quick Tunnel
+mode is flagged as a hard failure when a custom domain is configured, because
+its address changes on every restart and can never serve your domain.
+
 ## Honest notes
 
 - **Tunnel first-time setup is still manual on the HOST PC** (one time):

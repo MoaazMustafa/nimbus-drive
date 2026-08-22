@@ -231,3 +231,21 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface2);
   font-family: var(--mono); font-size: 12px; white-space: pre-wrap;
   max-height: 140px; overflow: auto; user-select: text;
 }
+
+/* ── domain & sign-in verification ───────────────────── */
+.checks { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.checks li { display: grid; grid-template-columns: 20px 1fr; gap: 4px 10px; font-size: 13px; }
+.checks .mark { grid-row: span 2; text-align: center; font-weight: 700; }
+.checks .mark.ok { color: var(--green); }
+.checks .mark.fail { color: var(--red); }
+.checks .mark.warn { color: var(--yellow); }
+.checks .mark.skip { color: var(--muted); }
+.checks .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.checks .name { font-weight: 500; }
+.checks .why { color: var(--muted); font-size: 12.5px; user-select: text; }
+.checks .fix {
+  margin: 2px 0 0; padding: 8px 10px; border-radius: 8px; user-select: text;
+  background: rgba(234,179,8,.08); border: 1px solid rgba(234,179,8,.28);
+  color: #f5d68a; font-size: 12.5px; white-space: pre-wrap; word-break: break-word;
+}
+.checks li.fail .fix { background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.3); color: #fca5a5; }

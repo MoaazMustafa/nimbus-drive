@@ -105,6 +105,16 @@
           <div class="quick-row"><span class="muted">Log files</span><span class="mono">data/logs/</span><button class="btn ghost small" id="btn-open-logs">Open</button></div>
         </div>
       </div>
+
+      <div class="card" id="verify-card">
+        <div class="row">
+          <h2 class="grow">Domain &amp; sign-in</h2>
+          <span id="verify-verdict" class="pill gray hidden"></span>
+          <button id="btn-verify" class="btn secondary small">Verify now</button>
+        </div>
+        <p class="muted small-note">Checks end-to-end that your address really reaches this PC and that Google will let people sign in from a browser.</p>
+        <ul id="verify-list" class="checks hidden"></ul>
+      </div>
     </main>
 
     <!-- Logs -->

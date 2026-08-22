@@ -39,6 +39,8 @@ jobs:
         run: node scripts/dev/e2e.mjs
       - name: Desktop supervision core tests
         run: node scripts/dev/desktop-core-test.mjs
+      - name: Domain & sign-in verifier tests
+        run: node scripts/dev/verify-test.mjs
 
   installer:
     needs: test
