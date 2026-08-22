@@ -31,6 +31,7 @@ function fetchStatus(url, timeoutMs = 4000) {
 
 function which(cmd) {
   return new Promise((resolve) => {
+    if (path.isAbsolute(cmd) && fs.existsSync(cmd)) return resolve(cmd);
     const probe = process.platform === 'win32' ? 'where' : 'which';
     execFile(probe, [cmd], { windowsHide: true, timeout: 4000 }, (err, stdout) => {
       resolve(err ? null : String(stdout).split(/\r?\n/)[0].trim() || null);
@@ -239,9 +240,18 @@ class Supervisor extends EventEmitter {
     if (cfg.tunnelEnabled) {
       this.procs.tunnel = mk('tunnel', () => {
         const bin = cfg.cloudflaredPath || 'cloudflared';
-        const args = ['tunnel', 'run'];
-        if (this.webPort !== WEB_PORT_DEFAULT) args.push('--url', `http://localhost:${this.webPort}`);
-        args.push(cfg.tunnelName || 'nimbus');
+        const mode = cfg.tunnelMode || (cfg.tunnelToken ? 'token' : 'quick');
+        let args = [];
+        if (mode === 'token' && cfg.tunnelToken) {
+          args = ['tunnel', 'run', '--token', cfg.tunnelToken.trim()];
+        } else if (mode === 'named') {
+          args = ['tunnel', 'run'];
+          if (this.webPort !== WEB_PORT_DEFAULT) args.push('--url', `http://localhost:${this.webPort}`);
+          args.push(cfg.tunnelName || 'nimbus');
+        } else {
+          // Quick Tunnel — instant free trycloudflare.com URL
+          args = ['tunnel', '--url', `http://localhost:${this.webPort}`];
+        }
         return { cmd: bin, args, cwd: root };
       });
     } else {

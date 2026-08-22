@@ -53,6 +53,8 @@
     },
     "nsis": {
       "oneClick": true,
+      "allowElevation": true,
+      "requestedExecutionLevel": "highestAvailable",
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true
     },

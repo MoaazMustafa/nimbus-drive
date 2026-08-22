@@ -27,6 +27,38 @@ function sanitizeVersion(v) {
   return String(v).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 60) || 'unknown';
 }
 
+/**
+ * Move directory safely on Windows and Unix, retrying on transient locks (EPERM, EBUSY)
+ * and falling back to copy+delete if atomic rename is blocked.
+ */
+async function safeMoveDir(srcDir, destDir, maxRetries = 10) {
+  await fsp.rm(destDir, { recursive: true, force: true }).catch(() => {});
+
+  let lastErr = null;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await fsp.rename(srcDir, destDir);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (['EPERM', 'EACCES', 'EBUSY', 'EEXIST', 'EXDEV'].includes(err.code) || String(err.message).includes('PERM')) {
+        await fsp.rm(destDir, { recursive: true, force: true }).catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  try {
+    await fsp.mkdir(destDir, { recursive: true });
+    await fsp.cp(srcDir, destDir, { recursive: true, force: true });
+    await fsp.rm(srcDir, { recursive: true, force: true }).catch(() => {});
+  } catch (cpErr) {
+    throw new Error(`Failed to activate directory (${lastErr?.message || cpErr.message})`);
+  }
+}
+
 class Bootstrap extends EventEmitter {
   /**
    * @param {object} opts
@@ -216,8 +248,7 @@ class Bootstrap extends EventEmitter {
         path.join(staging, '.nimbus-version.json'),
         JSON.stringify({ version: release.version, name: release.name || release.version, notes: release.notes || '', installedAt: Date.now() }, null, 2)
       );
-      await fsp.rm(finalDir, { recursive: true, force: true });
-      await fsp.rename(staging, finalDir);
+      await safeMoveDir(staging, finalDir);
       await fsp.writeFile(this.currentFile, JSON.stringify({ version: release.version, path: finalDir, activatedAt: Date.now() }, null, 2));
       await this.prune();
       this.step('activate', 'ok', `Nimbus Drive ${release.version} is ready`);

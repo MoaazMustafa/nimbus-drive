@@ -33,6 +33,7 @@ const { ensureNode, ensureCloudflared } = require('./lib/runtime');
 // The home of this app: where installs and updates come from. Baked in so a
 // new user never has to know or type it — Setup.exe → Install → done.
 const DEFAULT_REPO = 'MoaazMustafa/nimbus-drive';
+const startHidden = process.argv.includes('--hidden') || process.argv.includes('--autostart');
 
 // ── app config (lives in the OS per-user app-data dir) ──────────────
 const CONFIG_DEFAULTS = {
@@ -41,7 +42,9 @@ const CONFIG_DEFAULTS = {
   projectRoot: null, // checkout mode
   nodePath: 'node',
   tunnelEnabled: false,
+  tunnelMode: 'quick', // 'quick' | 'token' | 'named'
   tunnelName: 'nimbus',
+  tunnelToken: '',
   cloudflaredPath: 'cloudflared',
   startServicesOnLaunch: true,
 };
@@ -286,6 +289,9 @@ async function runInstallFlow(release) {
   installBusy = true;
   pushState();
   try {
+    if (supervisor) {
+      await supervisor.stopAll().catch(() => {});
+    }
     await ensureRuntime();
     const installed = await bootstrap.installVersion(release);
     await activateVersionDir(installed.path);
