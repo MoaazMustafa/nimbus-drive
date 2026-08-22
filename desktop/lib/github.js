@@ -35,12 +35,19 @@ class GitHub {
     try {
       const rel = await fetchJson(`${this.apiBase}/repos/${owner}/${repo}/releases/latest`, { headers: this.headers() });
       if (rel && rel.tag_name) {
+        const tag = rel.tag_name;
+        const mainUrl = rel.tarball_url || `${this.apiBase}/repos/${owner}/${repo}/tarball/${tag}`;
         return {
           kind: 'release',
-          version: rel.tag_name,
-          name: rel.name || rel.tag_name,
+          version: tag,
+          name: rel.name || tag,
           notes: rel.body || '',
-          tarballUrl: rel.tarball_url || `${this.apiBase}/repos/${owner}/${repo}/tarball/${rel.tag_name}`,
+          tarballUrl: mainUrl,
+          tarballUrls: [
+            `https://codeload.github.com/${owner}/${repo}/tar.gz/refs/tags/${tag}`,
+            `https://github.com/${owner}/${repo}/archive/refs/tags/${tag}.tar.gz`,
+            mainUrl,
+          ],
           publishedAt: rel.published_at || null,
         };
       }
@@ -53,12 +60,18 @@ class GitHub {
       const branch = info.default_branch || 'main';
       const commits = await fetchJson(`${this.apiBase}/repos/${owner}/${repo}/commits/${branch}`, { headers: this.headers() });
       const sha = (commits.sha || '').slice(0, 7) || 'head';
+      const mainUrl = `${this.apiBase}/repos/${owner}/${repo}/tarball/${branch}`;
       return {
         kind: 'branch',
         version: `${branch}-${sha}`,
         name: `Latest ${branch} (${sha})`,
         notes: commits.commit?.message || '',
-        tarballUrl: `${this.apiBase}/repos/${owner}/${repo}/tarball/${branch}`,
+        tarballUrl: mainUrl,
+        tarballUrls: [
+          `https://codeload.github.com/${owner}/${repo}/tar.gz/refs/heads/${branch}`,
+          `https://github.com/${owner}/${repo}/archive/refs/heads/${branch}.tar.gz`,
+          mainUrl,
+        ],
         publishedAt: commits.commit?.committer?.date || null,
       };
     } catch (err) {

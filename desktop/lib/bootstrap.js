@@ -197,7 +197,8 @@ class Bootstrap extends EventEmitter {
 
       // 1 — download the code
       this.step('download', 'running', `Downloading Nimbus Drive ${release.version}…`);
-      await downloadFile(release.tarballUrl, tarball, {
+      const downloadUrls = release.tarballUrls || (release.tarballUrl ? [release.tarballUrl] : []);
+      await downloadFile(downloadUrls.length ? downloadUrls : release.tarballUrl, tarball, {
         signal: this.abort.signal,
         timeoutMs: 600000,
         onProgress: (p) => this.step('download', 'running', `Downloading Nimbus Drive ${release.version}…`, { progress: p.percent }),
