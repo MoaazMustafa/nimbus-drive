@@ -248,13 +248,24 @@ class Supervisor extends EventEmitter {
     if (cfg.tunnelEnabled) {
       this.procs.tunnel = mk('tunnel', () => {
         const bin = cfg.cloudflaredPath || 'cloudflared';
-        const mode = cfg.tunnelMode || (cfg.tunnelToken ? 'token' : 'quick');
+        const mode = cfg.tunnelMode || (cfg.tunnelToken ? 'token' : 'named'); // default preserves existing named tunnels (quick URLs rotate and break OAuth)
         let args = [];
         if (mode === 'token' && cfg.tunnelToken) {
           args = ['tunnel', 'run', '--token', cfg.tunnelToken.trim()];
         } else if (mode === 'named') {
           args = ['tunnel', 'run'];
-          if (this.webPort !== WEB_PORT_DEFAULT) args.push('--url', `http://localhost:${this.webPort}`);
+          const projConfig = path.join(root, 'cloudflared', 'config.yml');
+          const osHome = process.env.USERPROFILE || process.env.HOME || '';
+          const userConfig = osHome ? path.join(osHome, '.cloudflared', 'config.yml') : null;
+          const configToUse = fs.existsSync(projConfig) ? projConfig : (userConfig && fs.existsSync(userConfig) ? userConfig : null);
+          if (configToUse) {
+            args.push('--config', configToUse);
+            try {
+              let txt = fs.readFileSync(configToUse, 'utf8');
+              const updated = txt.replace(/service:\s*http:\/\/(?:localhost|127\.0\.0\.1):\d+/g, `service: http://localhost:${this.webPort}`);
+              if (updated !== txt) fs.writeFileSync(configToUse, updated, 'utf8');
+            } catch { /* best effort */ }
+          }
           args.push(cfg.tunnelName || 'nimbus');
         } else {
           // Quick Tunnel — instant free trycloudflare.com URL

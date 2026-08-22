@@ -42,7 +42,7 @@ const CONFIG_DEFAULTS = {
   projectRoot: null, // checkout mode
   nodePath: 'node',
   tunnelEnabled: false,
-  tunnelMode: 'quick', // 'quick' | 'token' | 'named'
+  tunnelMode: 'named', // 'named' | 'token' | 'quick' — named preserves existing tunnel setups; quick URLs change every restart and break Google OAuth
   tunnelName: 'nimbus',
   tunnelToken: '',
   cloudflaredPath: 'cloudflared',
@@ -93,7 +93,6 @@ let quitting = false;
 let projectRoot = null;
 let updateInfo = null; // {version, name, notes} when newer than installed
 let installBusy = false;
-const startHidden = process.argv.includes('--hidden');
 
 // ── self-update of THIS app (the shell) via electron-updater ────────
 // Uses the latest.yml + .blockmap that CI already publishes with every

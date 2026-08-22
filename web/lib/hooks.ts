@@ -14,8 +14,10 @@ export function useMe(redirect = true) {
     shouldRetryOnError: false,
   });
   useEffect(() => {
+    // Only a real 401 means "not signed in". Any other failure (API down,
+    // proxy 500) must NOT bounce to /login — the page shows a retry panel.
     if (redirect && error instanceof ApiError && error.status === 401) {
-      router.replace(`/login`);
+      router.replace("/login");
     }
   }, [error, redirect, router]);
   return { me: data, error, isLoading, mutate };
