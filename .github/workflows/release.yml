@@ -41,6 +41,8 @@ jobs:
         run: node scripts/dev/desktop-core-test.mjs
       - name: Domain & sign-in verifier tests
         run: node scripts/dev/verify-test.mjs
+      - name: Cloudflare tunnel launch tests
+        run: node scripts/dev/tunnel-test.mjs
 
   installer:
     needs: test

@@ -39,6 +39,7 @@ class ManagedProcess extends EventEmitter {
     this.restartTimer = null;
     this.lastExit = null; // {code, signal, at}
     this.lastError = null;
+    this.recentErr = []; // last few stderr lines — the "why" behind a crash
   }
 
   setStatus(status, extra = {}) {
@@ -67,6 +68,7 @@ class ManagedProcess extends EventEmitter {
       return;
     }
     this.setStatus('starting');
+    this.recentErr = [];
     this.log.push(`[supervisor] starting: ${spec.cmd} ${spec.args.join(' ')}`);
     let child;
     try {
@@ -84,7 +86,17 @@ class ManagedProcess extends EventEmitter {
     this.pid = child.pid || null;
     this.startedAt = Date.now();
     child.stdout.on('data', (d) => this.log.push(d.toString()));
-    child.stderr.on('data', (d) => this.log.push(d.toString(), 'error'));
+    child.stderr.on('data', (d) => {
+      const text = d.toString();
+      this.log.push(text, 'error');
+      for (const line of text.split(/\r?\n/)) {
+        const t = line.trim();
+        // keep the meaningful complaint, not usage/help boilerplate
+        if (!t || /^(NAME|USAGE|DESCRIPTION|OPTIONS|SUBCOMMAND|TUNNEL COMMAND|GLOBAL)/i.test(t) || t.startsWith('--')) continue;
+        this.recentErr.push(t);
+        if (this.recentErr.length > 5) this.recentErr.shift();
+      }
+    });
     child.once('error', (err) => this._onSpawnError(err));
     child.once('exit', (code, signal) => this._onExit(code, signal));
   }
@@ -112,13 +124,18 @@ class ManagedProcess extends EventEmitter {
       this.setStatus('stopped');
       return;
     }
-    this.log.push(`[supervisor] ${this.name} exited unexpectedly (code=${code} signal=${signal || 'none'})`, 'error');
+    const reason = this.recentErr.filter(Boolean).slice(-2).join(' — ');
+    if (reason) this.lastError = reason;
+    this.log.push(`[supervisor] ${this.name} exited unexpectedly (code=${code} signal=${signal || 'none'})${reason ? ` — ${reason}` : ''}`, 'error');
     // crash-loop detection
     const now = Date.now();
     this.restartTimes = this.restartTimes.filter((t) => now - t < this.windowMs);
     this.restartTimes.push(now);
     if (this.restartTimes.length > this.maxRestarts) {
-      this.lastError = `Crashed ${this.restartTimes.length} times in ${Math.round(this.windowMs / 1000)}s — giving up. Check the ${this.name} logs.`;
+      const why = this.recentErr.filter(Boolean).slice(-2).join(' — ');
+      this.lastError = why
+        ? `${why}  (gave up after ${this.restartTimes.length} attempts — see the ${this.name} log)`
+        : `Crashed ${this.restartTimes.length} times in ${Math.round(this.windowMs / 1000)}s — giving up. Check the ${this.name} logs.`;
       this.log.push(`[supervisor] ${this.lastError}`, 'error');
       this.setStatus('failed');
       this.emit('failed', { name: this.name, error: this.lastError });

@@ -15,7 +15,8 @@
     "desktop:install": "npm --prefix desktop install",
     "desktop": "npm --prefix desktop start",
     "desktop:dist": "npm --prefix desktop run dist",
-    "test:verify": "node scripts/dev/verify-test.mjs"
+    "test:verify": "node scripts/dev/verify-test.mjs",
+    "test:tunnel": "node scripts/dev/tunnel-test.mjs"
   },
   "private": "true",
   "devDependencies": {

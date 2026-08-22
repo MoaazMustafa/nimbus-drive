@@ -180,6 +180,80 @@ class Supervisor extends EventEmitter {
     return true;
   }
 
+  /**
+   * Sanity-check a named-tunnel config before spawning cloudflared, so a
+   * missing credentials file reads as an explanation rather than a crash loop.
+   */
+  _preflightNamedConfig(configFile) {
+    let txt;
+    try {
+      txt = fs.readFileSync(configFile, 'utf8');
+    } catch (err) {
+      throw new Error(`Cannot read the tunnel config at ${configFile} (${err.code || err.message}).`);
+    }
+    if (!/ingress:/.test(txt) && !/hostname:/.test(txt)) {
+      throw new Error(`${configFile} has no ingress rules — it cannot route your domain. See SETUP.md §5.`);
+    }
+    const cred = /credentials-file:\s*(.+)/.exec(txt);
+    if (cred) {
+      const credPath = cred[1].trim().replace(/^["']|["']$/g, '');
+      if (!fs.existsSync(credPath)) {
+        throw new Error(
+          `The tunnel credentials file is missing: ${credPath}\n` +
+          `Copy it from the PC where the tunnel was created, or run "cloudflared tunnel login" and "cloudflared tunnel create <name>" on this PC (SETUP.md §5).`
+        );
+      }
+    }
+  }
+
+  /** Build the exact cloudflared command line (kept public for tests). */
+  buildTunnelSpec(cfg, root = this.projectRoot) {
+
+        const bin = cfg.cloudflaredPath || 'cloudflared';
+        const mode = cfg.tunnelMode || (cfg.tunnelToken ? 'token' : 'named'); // default preserves existing named tunnels (quick URLs rotate and break OAuth)
+        let args = [];
+
+        if (mode === 'token') {
+          const token = String(cfg.tunnelToken || '').trim();
+          if (!token) {
+            throw new Error('Tunnel mode is "token" but no tunnel token is set — paste the token from the Cloudflare dashboard in Settings.');
+          }
+          args = ['tunnel', 'run', '--token', token];
+        } else if (mode === 'named') {
+          // Where the routing lives. The user's own ~/.cloudflared/config.yml is
+          // the machine's real configuration (it is what the cloudflared service
+          // uses too), so it wins over the copy bundled inside an installed
+          // version, which is only ever a template.
+          const osHome = process.env.USERPROFILE || process.env.HOME || '';
+          const userConfig = osHome ? path.join(osHome, '.cloudflared', 'config.yml') : null;
+          const projConfig = path.join(root, 'cloudflared', 'config.yml');
+          const configToUse = (userConfig && fs.existsSync(userConfig)) ? userConfig
+            : (fs.existsSync(projConfig) ? projConfig : null);
+
+          // IMPORTANT: --config is a "tunnel command option", so it belongs
+          // BETWEEN `tunnel` and `run`:
+          //     cloudflared tunnel --config <file> run <name>
+          // Putting it after `run` makes cloudflared exit immediately with
+          // "Incorrect Usage: flag provided but not defined: -config".
+          args = ['tunnel'];
+          if (configToUse) {
+            this._preflightNamedConfig(configToUse);
+            args.push('--config', configToUse);
+            // keep the tunnel pointed at the port the website is really on
+            try {
+              const txt = fs.readFileSync(configToUse, 'utf8');
+              const updated = txt.replace(/service:\s*http:\/\/(?:localhost|127\.0\.0\.1):\d+/g, `service: http://localhost:${this.webPort}`);
+              if (updated !== txt) fs.writeFileSync(configToUse, updated, 'utf8');
+            } catch { /* best effort */ }
+          }
+          args.push('run', cfg.tunnelName || 'nimbus');
+        } else {
+          // Quick Tunnel — instant free trycloudflare.com URL (address rotates)
+          args = ['tunnel', '--url', `http://localhost:${this.webPort}`];
+        }
+    return { cmd: bin, args, cwd: root };
+  }
+
   async start() {
     if (this.running) return this.state();
     this.startError = null;
@@ -246,33 +320,7 @@ class Supervisor extends EventEmitter {
     });
 
     if (cfg.tunnelEnabled) {
-      this.procs.tunnel = mk('tunnel', () => {
-        const bin = cfg.cloudflaredPath || 'cloudflared';
-        const mode = cfg.tunnelMode || (cfg.tunnelToken ? 'token' : 'named'); // default preserves existing named tunnels (quick URLs rotate and break OAuth)
-        let args = [];
-        if (mode === 'token' && cfg.tunnelToken) {
-          args = ['tunnel', 'run', '--token', cfg.tunnelToken.trim()];
-        } else if (mode === 'named') {
-          args = ['tunnel', 'run'];
-          const projConfig = path.join(root, 'cloudflared', 'config.yml');
-          const osHome = process.env.USERPROFILE || process.env.HOME || '';
-          const userConfig = osHome ? path.join(osHome, '.cloudflared', 'config.yml') : null;
-          const configToUse = fs.existsSync(projConfig) ? projConfig : (userConfig && fs.existsSync(userConfig) ? userConfig : null);
-          if (configToUse) {
-            args.push('--config', configToUse);
-            try {
-              let txt = fs.readFileSync(configToUse, 'utf8');
-              const updated = txt.replace(/service:\s*http:\/\/(?:localhost|127\.0\.0\.1):\d+/g, `service: http://localhost:${this.webPort}`);
-              if (updated !== txt) fs.writeFileSync(configToUse, updated, 'utf8');
-            } catch { /* best effort */ }
-          }
-          args.push(cfg.tunnelName || 'nimbus');
-        } else {
-          // Quick Tunnel — instant free trycloudflare.com URL
-          args = ['tunnel', '--url', `http://localhost:${this.webPort}`];
-        }
-        return { cmd: bin, args, cwd: root };
-      });
+      this.procs.tunnel = mk('tunnel', () => this.buildTunnelSpec(cfg, root));
     } else {
       delete this.procs.tunnel;
     }
