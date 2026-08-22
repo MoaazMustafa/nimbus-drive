@@ -1,6 +1,6 @@
 {
   "name": "nimbus-desktop",
-  "version": "1.0.0",
+  "version": "1.0.16",
   "description": "Nimbus Drive desktop control panel \u2014 installs, runs, updates, and monitors your self-hosted drive without a terminal",
   "author": "Moaaz Mustafa",
   "homepage": "https://github.com/MoaazMustafa/nimbus-drive",

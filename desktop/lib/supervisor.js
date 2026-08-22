@@ -39,6 +39,21 @@ function which(cmd) {
   });
 }
 
+/**
+ * A credentials path under someone else's user profile is the classic symptom of
+ * a config.yml that travelled with the source code instead of being created on
+ * this machine. Saying so turns a dead end into an explanation.
+ */
+function foreignHomeNote(credPath) {
+  const m = /^([A-Za-z]:\\Users\\|\/home\/|\/Users\/)([^\\/]+)/.exec(credPath);
+  if (!m) return '';
+  const owner = m[2];
+  const meRaw = process.env.USERPROFILE || process.env.HOME || '';
+  const me = meRaw ? path.basename(meRaw) : '';
+  if (!me || owner.toLowerCase() === me.toLowerCase()) return '';
+  return `\n  (that path belongs to the user "${owner}", not "${me}" — this config came from another PC.)`;
+}
+
 class Supervisor extends EventEmitter {
   /**
    * @param {object} opts
@@ -184,7 +199,7 @@ class Supervisor extends EventEmitter {
    * Sanity-check a named-tunnel config before spawning cloudflared, so a
    * missing credentials file reads as an explanation rather than a crash loop.
    */
-  _preflightNamedConfig(configFile) {
+  _preflightNamedConfig(configFile, tunnelName = 'nimbus') {
     let txt;
     try {
       txt = fs.readFileSync(configFile, 'utf8');
@@ -199,8 +214,14 @@ class Supervisor extends EventEmitter {
       const credPath = cred[1].trim().replace(/^["']|["']$/g, '');
       if (!fs.existsSync(credPath)) {
         throw new Error(
-          `The tunnel credentials file is missing: ${credPath}\n` +
-          `Copy it from the PC where the tunnel was created, or run "cloudflared tunnel login" and "cloudflared tunnel create <name>" on this PC (SETUP.md §5).`
+          `The tunnel credentials file named by ${configFile} is missing:\n` +
+          `  ${credPath}${foreignHomeNote(credPath)}\n\n` +
+          `That file is created by "cloudflared tunnel create <name>" on THIS PC and is never shipped with the code.\n` +
+          `Two ways out:\n` +
+          `  • Easiest — set Tunnel Mode to "Permanent Custom Domain" in Settings and paste the tunnel token from the ` +
+          `Cloudflare Zero Trust dashboard. Token mode needs no config file and no credentials file.\n` +
+          `  • Or rebuild the named tunnel here: "cloudflared tunnel login" then ` +
+          `"cloudflared tunnel create ${tunnelName}" (SETUP.md §5).`
         );
       }
     }
@@ -229,6 +250,15 @@ class Supervisor extends EventEmitter {
           const projConfig = path.join(root, 'cloudflared', 'config.yml');
           const configToUse = (userConfig && fs.existsSync(userConfig)) ? userConfig
             : (fs.existsSync(projConfig) ? projConfig : null);
+          if (!configToUse) {
+            throw new Error(
+              `Named tunnel mode needs a tunnel config, and none was found at\n` +
+              `  ${userConfig || '~/.cloudflared/config.yml'}\n\n` +
+              `Create one with "cloudflared tunnel login" then "cloudflared tunnel create ${cfg.tunnelName || 'nimbus'}" ` +
+              `(SETUP.md §5), or switch Tunnel Mode to "Permanent Custom Domain" in Settings and paste a tunnel token — ` +
+              `token mode needs no config file at all.`
+            );
+          }
 
           // IMPORTANT: --config is a "tunnel command option", so it belongs
           // BETWEEN `tunnel` and `run`:
@@ -237,7 +267,7 @@ class Supervisor extends EventEmitter {
           // "Incorrect Usage: flag provided but not defined: -config".
           args = ['tunnel'];
           if (configToUse) {
-            this._preflightNamedConfig(configToUse);
+            this._preflightNamedConfig(configToUse, cfg.tunnelName || 'nimbus');
             args.push('--config', configToUse);
             // keep the tunnel pointed at the port the website is really on
             try {

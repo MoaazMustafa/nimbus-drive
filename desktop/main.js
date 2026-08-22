@@ -227,6 +227,8 @@ function publicState() {
       packaged: app.isPackaged,
       config: {
         tunnelEnabled: appConfig.tunnelEnabled,
+        tunnelMode: appConfig.tunnelMode,
+        tunnelToken: appConfig.tunnelToken,
         tunnelName: appConfig.tunnelName,
         cloudflaredPath: appConfig.cloudflaredPath,
         startServicesOnLaunch: appConfig.startServicesOnLaunch,
@@ -277,6 +279,13 @@ function createSupervisor() {
     projectRoot,
     getAppConfig: () => ({
       tunnelEnabled: appConfig.tunnelEnabled,
+      // tunnelMode/tunnelToken MUST be forwarded: buildTunnelSpec falls back to
+      // 'named' when mode is undefined, so omitting them here silently ignored
+      // the user's "Permanent Custom Domain" choice and their pasted token, and
+      // forced every start down the named-tunnel path (config.yml + credentials
+      // file) even when neither existed on the machine.
+      tunnelMode: appConfig.tunnelMode,
+      tunnelToken: appConfig.tunnelToken,
       tunnelName: appConfig.tunnelName,
       cloudflaredPath: appConfig.cloudflaredPath,
       nodePath: appConfig.nodePath,

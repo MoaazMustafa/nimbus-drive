@@ -84,7 +84,7 @@ console.log('\n— preflight (fail with a reason, not a crash loop)');
 
   fs.writeFileSync(cfgFile, `tunnel: abc\ncredentials-file: ${path.join(tmp, 'gone.json')}\ningress:\n  - hostname: h\n    service: http://localhost:3000\n`);
   let msg = null; try { argsFor({ tunnelMode: 'named' }); } catch (e) { msg = e.message; }
-  check('missing credentials file is caught', !!msg && /credentials file is missing/i.test(msg), String(msg));
+  check('missing credentials file is caught', !!msg && /credentials file[\s\S]*is missing/i.test(msg), String(msg));
   check('…and says how to fix it', !!msg && /tunnel create|Copy it from/i.test(msg));
 
   fs.writeFileSync(cfgFile, 'tunnel: abc\n# no ingress at all\n');
@@ -153,6 +153,94 @@ console.log('\n— against the real cloudflared binary');
       child.on('exit', () => resolve(buf));
     });
     check('the old argument order is confirmed broken', /Incorrect Usage/i.test(oldOut), oldOut.split('\n')[0]);
+  }
+}
+
+console.log('\n— tunnel mode reaches the supervisor at all (the "token mode is ignored" bug)');
+{
+  // main.js builds the object handed to Supervisor via getAppConfig(). It used
+  // to list only tunnelEnabled/tunnelName/cloudflaredPath/nodePath, so
+  // buildTunnelSpec saw mode === undefined, fell back to 'named', and demanded a
+  // config.yml + credentials file even when the user had chosen token mode and
+  // pasted a token. Guard the wiring, not just the command builder.
+  const mainSrc = await fsp.readFile(path.join(ROOT, 'desktop', 'main.js'), 'utf8');
+  const supBlock = /getAppConfig:\s*\(\)\s*=>\s*\(\{([\s\S]*?)\}\),/.exec(mainSrc);
+  check('main.js has a getAppConfig block', !!supBlock);
+  if (supBlock) {
+    check('getAppConfig forwards tunnelMode', /\btunnelMode\b/.test(supBlock[1]), supBlock[1].trim());
+    check('getAppConfig forwards tunnelToken', /\btunnelToken\b/.test(supBlock[1]), supBlock[1].trim());
+  }
+  const stateBlock = /config:\s*\{([\s\S]*?)\},/.exec(mainSrc);
+  check('publicState exposes tunnelMode to the renderer', !!stateBlock && /\btunnelMode\b/.test(stateBlock[1]));
+  check('publicState exposes tunnelToken (else saving Settings wipes it)', !!stateBlock && /\btunnelToken\b/.test(stateBlock[1]));
+
+  // and the behaviour that wiring enables: token mode wins even when a named
+  // config exists on disk
+  writeCfg();
+  const t = argsFor({ tunnelMode: 'token', tunnelToken: 'eyJhIjoiYiJ9', tunnelName: 'nimbus' });
+  check('token mode ignores an existing named config', JSON.stringify(t) === JSON.stringify(['tunnel', 'run', '--token', 'eyJhIjoiYiJ9']), JSON.stringify(t));
+}
+
+console.log('\n— named mode failures explain themselves');
+{
+  const HOME0 = process.env.HOME, UP0 = process.env.USERPROFILE;
+  const fakeHome = path.join(tmp, 'home', 'me');
+  await fsp.mkdir(fakeHome, { recursive: true });
+  process.env.HOME = fakeHome;
+  process.env.USERPROFILE = fakeHome;
+
+  // (a) no config anywhere
+  const bare = path.join(tmp, 'bare');
+  await fsp.mkdir(bare, { recursive: true });
+  let err = null;
+  try { sup.buildTunnelSpec({ tunnelMode: 'named', tunnelName: 'nimbus' }, bare); } catch (e) { err = e; }
+  check('missing config throws instead of spawning a doomed cloudflared', !!err);
+  check('...and names the file it looked for', !!err && err.message.includes('.cloudflared'), err && err.message);
+  check('...and offers token mode as the easy way out', !!err && /Permanent Custom Domain/.test(err.message), err && err.message);
+
+  // (b) config present, credentials file missing
+  const credGone = path.join(tmp, 'credgone');
+  await fsp.mkdir(path.join(credGone, 'cloudflared'), { recursive: true });
+  const otherCred = process.platform === 'win32'
+    ? 'C:\\Users\\someoneelse\\.cloudflared\\451d9ecf.json'
+    : '/home/someoneelse/.cloudflared/451d9ecf.json';
+  await fsp.writeFile(path.join(credGone, 'cloudflared', 'config.yml'),
+    `tunnel: 451d9ecf\ncredentials-file: ${otherCred}\ningress:\n  - hostname: cloud.example.com\n    service: http://localhost:3000\n  - service: http_status:404\n`);
+  err = null;
+  try { sup.buildTunnelSpec({ tunnelMode: 'named', tunnelName: 'nimbus' }, credGone); } catch (e) { err = e; }
+  check('missing credentials file throws', !!err);
+  check('...names the config that referenced it', !!err && err.message.includes('config.yml'), err && err.message);
+  check('...flags that the path belongs to another user', !!err && /belongs to the user "someoneelse"/.test(err.message), err && err.message);
+  check('...says the file is never shipped with the code', !!err && /never shipped with the code/.test(err.message));
+  check('...offers token mode', !!err && /Permanent Custom Domain/.test(err.message));
+  check('...prints the right create command', !!err && err.message.includes('cloudflared tunnel create nimbus'), err && err.message);
+
+  // (c) same config but the credentials file exists -> no throw
+  const credOk = path.join(tmp, 'credok');
+  await fsp.mkdir(path.join(credOk, 'cloudflared'), { recursive: true });
+  await fsp.writeFile(path.join(credOk, 'cloudflared', 'config.yml'),
+    `tunnel: 451d9ecf\ncredentials-file: ${credFile}\ningress:\n  - hostname: cloud.example.com\n    service: http://localhost:3000\n  - service: http_status:404\n`);
+  let ok = null, err2 = null;
+  try { ok = sup.buildTunnelSpec({ tunnelMode: 'named', tunnelName: 'nimbus' }, credOk); } catch (e) { err2 = e; }
+  check('a valid named config still builds a command', !!ok && !err2, err2 && err2.message);
+
+  process.env.HOME = HOME0; process.env.USERPROFILE = UP0;
+  if (HOME0 === undefined) delete process.env.HOME;
+  if (UP0 === undefined) delete process.env.USERPROFILE;
+}
+
+console.log('\n— the repo must not ship anyone\'s personal tunnel config');
+{
+  const isRepo = await new Promise((resolve) => {
+    execFile('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ROOT }, (e, out) => resolve(!e && /true/.test(String(out))));
+  });
+  const certs = ['cloudflared/cert.pem', 'cloudflared/config.yml'];
+  for (const rel of certs) {
+    if (!isRepo) { skip(`${rel} is NOT tracked by git`, 'not a git checkout here'); continue; }
+    const tracked = await new Promise((resolve) => {
+      execFile('git', ['ls-files', '--error-unmatch', rel], { cwd: ROOT }, (e) => resolve(!e));
+    });
+    check(`${rel} is NOT tracked by git`, !tracked, tracked ? 'still committed — it ships to every user' : '');
   }
 }
 
