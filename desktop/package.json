@@ -1,13 +1,17 @@
 {
   "name": "nimbus-desktop",
   "version": "1.0.0",
-  "description": "Nimbus Drive desktop control panel — configure, run, and monitor your self-hosted drive without a terminal",
+  "description": "Nimbus Drive desktop control panel — installs, runs, updates, and monitors your self-hosted drive without a terminal",
+  "author": "Moaaz Mustafa",
+  "homepage": "https://github.com/MoaazMustafa/nimbus-drive",
+  "repository": "github:MoaazMustafa/nimbus-drive",
   "main": "main.js",
   "private": true,
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win",
-    "dist:dir": "electron-builder --dir"
+    "dist:dir": "electron-builder --dir",
+    "dist:ci": "electron-builder --win --publish always"
   },
   "devDependencies": {
     "electron": "^43.0.0",
@@ -29,7 +33,10 @@
     ],
     "icon": "assets/icon.png",
     "publish": {
-      "provider": "github"
+      "provider": "github",
+      "owner": "MoaazMustafa",
+      "repo": "nimbus-drive",
+      "releaseType": "release"
     },
     "win": {
       "target": [

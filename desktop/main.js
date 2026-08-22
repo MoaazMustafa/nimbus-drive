@@ -30,6 +30,10 @@ const { Bootstrap } = require('./lib/bootstrap');
 const { GitHub, parseRepo } = require('./lib/github');
 const { ensureNode, ensureCloudflared } = require('./lib/runtime');
 
+// The home of this app: where installs and updates come from. Baked in so a
+// new user never has to know or type it — Setup.exe → Install → done.
+const DEFAULT_REPO = 'MoaazMustafa/nimbus-drive';
+
 // ── app config (lives in the OS per-user app-data dir) ──────────────
 const CONFIG_DEFAULTS = {
   mode: null, // 'bootstrap' | 'checkout'
@@ -137,6 +141,7 @@ function publicState() {
       version: app.getVersion(),
       mode: appConfig.mode,
       repo: appConfig.repo,
+      defaultRepo: DEFAULT_REPO,
       projectRoot,
       platform: process.platform,
       packaged: app.isPackaged,
@@ -235,8 +240,8 @@ async function runInstallFlow(release) {
 }
 
 async function checkForUpdate({ notifyUser = false } = {}) {
-  if (!isBootstrap() || !appConfig.repo) return null;
-  const parsed = parseRepo(appConfig.repo);
+  if (!isBootstrap()) return null;
+  const parsed = parseRepo(appConfig.repo || DEFAULT_REPO);
   if (!parsed) return null;
   const gh = new GitHub();
   const latest = await gh.latestVersion(parsed.owner, parsed.repo);
@@ -353,7 +358,9 @@ function registerIpc() {
   // ── first-run choices ────────────────────────────────────────────
   ipcMain.handle('setup:install', async (_e, repoInput) => {
     if (installBusy) return { ok: false, error: 'An install is already running.' };
-    const parsed = parseRepo(repoInput);
+    // No input needed — the app knows its own repo. An explicit value (the
+    // hidden "change" option) still wins for advanced setups.
+    const parsed = parseRepo(repoInput || appConfig.repo || DEFAULT_REPO);
     if (!parsed) return { ok: false, error: 'Enter the repository as owner/name (e.g. yourname/nimbus-drive) or a github.com link.' };
     appConfig.mode = 'bootstrap';
     appConfig.repo = `${parsed.owner}/${parsed.repo}`;

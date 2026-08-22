@@ -51,6 +51,7 @@ jobs:
       - name: Install desktop app dependencies
         run: npm --prefix desktop install --no-audit --no-fund
       - name: Build and publish the Windows installer to this release
-        run: npx --prefix desktop electron-builder --win --publish always --project desktop
+        # npm run (not npx): guarantees the LOCAL electron-builder with cwd=desktop
+        run: npm --prefix desktop run dist:ci
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

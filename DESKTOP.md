@@ -14,8 +14,9 @@ Setup.exe  →  fetch code from GitHub  →  private Node runtime  →  install
 1. Download **Nimbus Drive Setup.exe** from the repo's **Releases** page and run
    it. (Unsigned build → SmartScreen shows "Windows protected your PC" once:
    click *More info → Run anyway*.)
-2. The app opens on a welcome screen. Type the repo (e.g. `yourname/nimbus-drive`)
-   and press **Install**. It then, with a visible checklist and progress:
+2. The app opens on a welcome screen with one button: **Install Nimbus Drive**.
+   The repo (`MoaazMustafa/nimbus-drive`) is built into the app — nothing to
+   type. Press it and, with a visible checklist and progress, the app:
    - downloads its own private Node runtime (~30 MB — nothing to pre-install),
    - downloads the latest **Release** of the code,
    - installs components and builds the web app,

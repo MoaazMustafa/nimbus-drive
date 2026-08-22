@@ -112,7 +112,10 @@ function render() {
   const needsWelcome = !state.app.projectRoot;
   $("view-welcome").classList.toggle("hidden", !needsWelcome);
   $("view-main").classList.toggle("hidden", needsWelcome);
-  if (needsWelcome) return;
+  if (needsWelcome) {
+    $("repo-label").textContent = state.app.repo || state.app.defaultRepo || "…";
+    return;
+  }
 
   const env = state.env || {};
   $("app-name").textContent = env.appName || "Nimbus Drive";
@@ -298,16 +301,17 @@ for (const btn of document.querySelectorAll(".tab")) {
   btn.addEventListener("click", () => switchTab(btn.dataset.tab));
 }
 
-/* ── welcome: install from GitHub / locate ───────────── */
+/* ── welcome: one-click install (repo is baked in) ───── */
+$("repo-change").addEventListener("click", () => {
+  $("repo-row").classList.toggle("hidden");
+  if (!$("repo-row").classList.contains("hidden")) $("repo-input").focus();
+});
 $("btn-install").addEventListener("click", async () => {
-  const repo = $("repo-input").value.trim();
+  // Empty = use the app's built-in repo; the hidden "change" field overrides.
+  const repo = $("repo-row").classList.contains("hidden") ? "" : $("repo-input").value.trim();
   $("install-error").classList.add("hidden");
-  if (!repo) {
-    $("install-error").textContent = "Enter the GitHub repository, e.g. yourname/nimbus-drive";
-    $("install-error").classList.remove("hidden");
-    return;
-  }
   $("btn-install").disabled = true;
+  $("btn-install").textContent = "Installing…";
   $("repo-input").disabled = true;
   $("install-actions").classList.remove("hidden");
   resetSteps();
@@ -315,6 +319,7 @@ $("btn-install").addEventListener("click", async () => {
   $("install-actions").classList.add("hidden");
   if (!res.ok) {
     $("btn-install").disabled = false;
+    $("btn-install").textContent = "Install Nimbus Drive";
     $("repo-input").disabled = false;
     $("install-error").textContent = res.error || "Install failed";
     $("install-error").classList.remove("hidden");
