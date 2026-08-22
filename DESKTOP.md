@@ -29,11 +29,17 @@ Setup.exe  →  fetch code from GitHub  →  private Node runtime  →  install
    Windows sign-in (tray), run the Cloudflare Tunnel (the app downloads
    `cloudflared` itself when you enable it).
 
-**Updates:** the app checks your GitHub Releases on launch and daily. When you
-publish a new release it shows a notification and an **Update now** button
-(release notes included). Updates install side-by-side and only activate after
-the build fully succeeds — a failed update can never break the running version,
-and **Roll back** returns to the previous one in one click.
+**Updates — both layers, from the same Releases page:**
+- **The drive code**: checked on launch and daily; a new release shows a
+  notification and an **Update now** button (release notes included). Updates
+  install side-by-side and only activate after the build fully succeeds — a
+  failed update can never break the running version, and **Roll back** returns
+  to the previous one in one click.
+- **The app itself**: self-updates via the `latest.yml` + blockmap that CI
+  publishes with every release. New versions download in the background; the
+  Overview shows **Restart app to update** (and even if ignored, the update
+  applies on the next app restart). If the auto-updater ever can't run, the
+  same card falls back to a **Get new installer** link.
 
 ## For this PC (where the code already lives)
 

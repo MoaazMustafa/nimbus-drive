@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('nimbus', {
   runUpdate: () => ipcRenderer.invoke('update:run'),
   rollback: () => ipcRenderer.invoke('update:rollback'),
   rebuild: () => ipcRenderer.invoke('rebuild:run'),
+  shellUpdateInstall: () => ipcRenderer.invoke('shell-update:install'),
+  openReleases: () => ipcRenderer.invoke('open:releases'),
 
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (payload) => ipcRenderer.invoke('config:save', payload),

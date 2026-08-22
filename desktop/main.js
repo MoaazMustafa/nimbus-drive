@@ -74,6 +74,53 @@ let updateInfo = null; // {version, name, notes} when newer than installed
 let installBusy = false;
 const startHidden = process.argv.includes('--hidden');
 
+// ── self-update of THIS app (the shell) via electron-updater ────────
+// Uses the latest.yml + .blockmap that CI already publishes with every
+// release. Downloads in the background; applies on "Restart app" or on the
+// next quit. Any failure degrades to a "download the new installer" link.
+let shellUpdate = { status: 'idle', version: null, progress: null, error: null };
+let autoUpdater = null;
+
+function initShellUpdater() {
+  if (!app.isPackaged || process.platform !== 'win32') return; // dev / non-win: nothing to do
+  try {
+    ({ autoUpdater } = require('electron-updater'));
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true; // ignored prompt still applies on next restart
+    autoUpdater.on('update-available', (info) => {
+      shellUpdate = { status: 'downloading', version: info?.version || null, progress: 0, error: null };
+      pushState();
+    });
+    autoUpdater.on('download-progress', (p) => {
+      shellUpdate.progress = Math.round(p?.percent || 0);
+      pushState();
+    });
+    autoUpdater.on('update-downloaded', (info) => {
+      shellUpdate = { status: 'ready', version: info?.version || shellUpdate.version, progress: 100, error: null };
+      notify('Nimbus Drive app update ready', 'Restart the app from the control panel to finish updating.');
+      pushState();
+    });
+    autoUpdater.on('update-not-available', () => {
+      if (shellUpdate.status !== 'ready') shellUpdate = { status: 'idle', version: null, progress: null, error: null };
+      pushState();
+    });
+    autoUpdater.on('error', (err) => {
+      // never fatal: the UI falls back to a manual installer link
+      shellUpdate = { status: 'error', version: shellUpdate.version, progress: null, error: String(err?.message || err).slice(0, 200) };
+      pushState();
+    });
+  } catch (err) {
+    console.warn('[desktop] self-updater unavailable:', err.message);
+    autoUpdater = null;
+  }
+}
+
+function checkShellUpdate() {
+  try {
+    autoUpdater?.checkForUpdates();
+  } catch { /* degrade to the fallback link */ }
+}
+
 const homeDir = () => app.getPath('userData');
 const iconPath = () => path.join(__dirname, 'assets', 'icon.png');
 const isBootstrap = () => appConfig.mode === 'bootstrap';
@@ -164,6 +211,17 @@ function publicState() {
             needsRebuild: cur ? bootstrap.needsRebuild() : false,
           }
         : null,
+      shellUpdate: {
+        ...shellUpdate,
+        // fallback signal: a newer release exists but the auto-updater can't
+        // deliver it (dev build, or updater error) → offer the installer link
+        fallback:
+          !!updateInfo &&
+          updateInfo.version !== `v${app.getVersion()}` &&
+          updateInfo.version !== app.getVersion() &&
+          (shellUpdate.status === 'error' || (!autoUpdater && app.isPackaged)),
+        releasesUrl: `https://github.com/${appConfig.repo || DEFAULT_REPO}/releases/latest`,
+      },
     },
   };
 }
@@ -444,6 +502,23 @@ function registerIpc() {
     }
   });
 
+  ipcMain.handle('shell-update:install', async () => {
+    if (!autoUpdater || shellUpdate.status !== 'ready') return { ok: false, error: 'No app update is ready.' };
+    try {
+      if (supervisor) await supervisor.stopAll(); // hand over cleanly before the installer runs
+      quitting = true; // skip our before-quit interception
+      autoUpdater.quitAndInstall(false, true);
+      return { ok: true };
+    } catch (err) {
+      quitting = false;
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('open:releases', () => {
+    return shell.openExternal(`https://github.com/${appConfig.repo || DEFAULT_REPO}/releases/latest`);
+  });
+
   ipcMain.handle('rebuild:run', async () => {
     if (!isBootstrap()) return { ok: false, error: 'Not available here.' };
     if (installBusy) return { ok: false, error: 'An install is already running.' };
@@ -627,9 +702,14 @@ if (!gotLock) {
       if (configured && appConfig.startServicesOnLaunch) supervisor.start().catch(() => {});
     }
 
-    // update awareness: on launch and daily
+    // update awareness (code + this app): on launch and daily
+    initShellUpdater();
     checkForUpdate({ notifyUser: true }).catch(() => {});
-    const daily = setInterval(() => checkForUpdate({ notifyUser: true }).catch(() => {}), 24 * 3600 * 1000);
+    checkShellUpdate();
+    const daily = setInterval(() => {
+      checkForUpdate({ notifyUser: true }).catch(() => {});
+      checkShellUpdate();
+    }, 24 * 3600 * 1000);
     if (daily.unref) daily.unref();
   });
 
