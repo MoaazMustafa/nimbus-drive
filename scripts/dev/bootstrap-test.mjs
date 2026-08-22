@@ -167,12 +167,30 @@ try {
     `APP_NAME=Nimbus Bootstrapped\nBASE_URL=http://localhost:${WEB_PORT}\nSTORAGE_ROOT=${path.join(home, 'familyfiles')}\nDATA_DIR=${path.join(home, 'data')}\nADMIN_EMAIL=owner@example.com\nGOOGLE_CLIENT_ID=x\nGOOGLE_CLIENT_SECRET=y\nAPI_PORT=${API_PORT}\n`
   );
 
+  // Simulate a previous install with a fat node_modules tree so activation has
+  // to retire something real (this is what used to take minutes on Windows).
+  const oldVersionDir = path.join(home, 'versions', 'v9.9.9');
+  await fsp.mkdir(path.join(oldVersionDir, 'server', 'node_modules', 'junk'), { recursive: true });
+  await Promise.all(Array.from({ length: 1500 }, (_, i) =>
+    fsp.writeFile(path.join(oldVersionDir, 'server', 'node_modules', 'junk', `f${i}.js`), 'module.exports=1;\n')));
+
+  const stepTimes = {};
+  boot.on('step', (s) => {
+    if (s.status === 'running' && !stepTimes[s.step]) stepTimes[s.step] = { start: Date.now() };
+    if (s.status === 'ok' && stepTimes[s.step]) stepTimes[s.step].end = Date.now();
+  });
+
   const installed = await boot.installVersion(latest);
   check('install completed and activated', installed.version === 'v9.9.9' && fs.existsSync(path.join(installed.path, 'web', '.next', 'BUILD_ID')));
   check('current.json points at the installed version', boot.current()?.path === installed.path);
   check('canonical .env was materialized into the version', fs.existsSync(path.join(installed.path, '.env')));
   check('the build baked OUR API port (env applied before build)', boot.bakedApiPort(installed.path) === API_PORT, String(boot.bakedApiPort(installed.path)));
   check('needsRebuild is false right after install', boot.needsRebuild() === false);
+  const activateMs = (stepTimes.activate?.end || 0) - (stepTimes.activate?.start || 0);
+  check('activation is fast — no waiting on deletes', activateMs >= 0 && activateMs < 5000, `${activateMs}ms`);
+  check('the old version was replaced', fs.existsSync(path.join(installed.path, 'web', '.next', 'BUILD_ID')));
+  check('retired copies are not offered as versions', !boot.listVersions().some((v) => v.name.startsWith('.')));
+
   check('install steps ran in order', ['download:ok', 'extract:ok', 'deps:ok', 'build:ok', 'activate:ok'].every((s) => stepsSeen.includes(s)), stepsSeen.join(','));
 
   console.log('\n— the INSTALLED version actually runs (supervisor boot)');

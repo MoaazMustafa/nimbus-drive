@@ -748,6 +748,7 @@ if (!gotLock) {
     bootstrap = new Bootstrap({ homeDir: homeDir() });
     bootstrap.on('step', (s) => pushInstall(s));
     bootstrap.on('steplog', (l) => pushInstall({ step: l.step, status: 'log', detail: l.line }));
+    bootstrap.sweepTrash(); // clear leftovers from previous updates, in the background
 
     // resolve where the project lives
     if (isBootstrap() && bootstrap.current()) {

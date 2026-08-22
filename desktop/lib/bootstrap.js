@@ -98,7 +98,7 @@ class Bootstrap extends EventEmitter {
     try {
       return fs
         .readdirSync(this.versionsDir, { withFileTypes: true })
-        .filter((d) => d.isDirectory() && !d.name.endsWith('.staging'))
+        .filter((d) => d.isDirectory() && !d.name.endsWith('.staging') && !d.name.startsWith('.'))
         .map((d) => {
           const p = path.join(this.versionsDir, d.name);
           let meta = {};
@@ -249,10 +249,13 @@ class Bootstrap extends EventEmitter {
         path.join(staging, '.nimbus-version.json'),
         JSON.stringify({ version: release.version, name: release.name || release.version, notes: release.notes || '', installedAt: Date.now() }, null, 2)
       );
+      await this.retire(finalDir); // move any previous copy aside (instant)
       await safeMoveDir(staging, finalDir);
       await fsp.writeFile(this.currentFile, JSON.stringify({ version: release.version, path: finalDir, activatedAt: Date.now() }, null, 2));
-      await this.prune();
       this.step('activate', 'ok', `Nimbus Drive ${release.version} is ready`);
+      // Old versions are cleaned up AFTER the user is running — deleting
+      // node_modules trees is slow and must never hold up activation.
+      this.prune().catch(() => {});
       return { version: release.version, path: finalDir };
     } catch (err) {
       const msg = this.abort.signal.aborted ? 'Cancelled' : err.message;
@@ -276,28 +279,64 @@ class Bootstrap extends EventEmitter {
   }
 
   /** Delete all non-active version directories, staging folders, and downloaded archives. */
+  /** Folder where retired versions wait to be deleted (same volume = instant move). */
+  trashDir() {
+    return path.join(this.versionsDir, '.trash');
+  }
+
+  /**
+   * Retire a directory WITHOUT waiting for the delete. Deleting a version means
+   * removing tens of thousands of node_modules files, which on Windows (with
+   * Defender scanning each one) takes minutes — far too slow to sit inside the
+   * "Activating" step. Renaming it aside is instantaneous; the actual delete
+   * happens in the background.
+   */
+  async retire(dir) {
+    if (!dir || !fs.existsSync(dir)) return;
+    try {
+      await fsp.mkdir(this.trashDir(), { recursive: true });
+      const dest = path.join(this.trashDir(), `${path.basename(dir)}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+      await fsp.rename(dir, dest); // instant on the same volume
+      this.deleteInBackground(dest);
+    } catch {
+      // locked or cross-volume — fall back to a background delete in place
+      this.deleteInBackground(dir);
+    }
+  }
+
+  /** Fire-and-forget removal; never blocks the UI and never throws. */
+  deleteInBackground(target) {
+    const timer = setTimeout(() => {
+      fsp.rm(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }).catch(() => {});
+    }, 0);
+    if (timer.unref) timer.unref();
+  }
+
+  /** Empty the trash folder in the background (called at startup too). */
+  sweepTrash() {
+    try {
+      if (!fs.existsSync(this.trashDir())) return;
+      for (const name of fs.readdirSync(this.trashDir())) {
+        this.deleteInBackground(path.join(this.trashDir(), name));
+      }
+    } catch { /* best effort */ }
+  }
+
   async prune() {
     const cur = this.current();
     if (!cur || !cur.path) return;
-    const activePath = path.resolve(cur.path);
+    // Keep the running version AND the one before it, so "Roll back" stays possible.
+    const keep = new Set([path.resolve(cur.path), this.previous() ? path.resolve(this.previous().path) : null].filter(Boolean));
     try {
       if (!fs.existsSync(this.versionsDir)) return;
-      const entries = await fsp.readdir(this.versionsDir, { withFileTypes: true });
-      for (const entry of entries) {
+      for (const entry of await fsp.readdir(this.versionsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
         const fullPath = path.resolve(this.versionsDir, entry.name);
-        if (fullPath === activePath) continue; // Keep ONLY the active version
-        try {
-          await fsp.rm(fullPath, { recursive: true, force: true });
-        } catch {
-          // Retry cleanup if Windows held a temporary lock
-          try {
-            const trashDir = `${fullPath}.trash_${Date.now()}`;
-            await safeMoveDir(fullPath, trashDir).catch(() => {});
-            await fsp.rm(trashDir, { recursive: true, force: true }).catch(() => {});
-          } catch { /* best effort */ }
-        }
+        if (keep.has(fullPath)) continue;
+        await this.retire(fullPath); // instant move-aside + background delete
       }
     } catch { /* best effort */ }
+    this.sweepTrash();
   }
 
   /** Rebuild the ACTIVE version's web app (needed when API_PORT changes). */
