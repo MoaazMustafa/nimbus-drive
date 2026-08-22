@@ -88,8 +88,13 @@ jobs:
           # The self-updater downloads exactly the filename recorded in latest.yml.
           # GitHub rewrites spaces in uploaded asset names, so a name with spaces
           # silently 404s the update. Fail the build instead of shipping that.
-          named=$(grep -m1 '^  *path:' desktop/dist/latest.yml | sed 's/.*path: *//' | tr -d '\r')
+          # (electron-builder writes `path:` at column 0; fall back to files[].url.)
+          named=$(sed -n 's/^[[:space:]]*path:[[:space:]]*//p' desktop/dist/latest.yml | head -1 | tr -d '\r' | sed 's/^["'"'"']//; s/["'"'"']$//')
+          if [ -z "$named" ]; then
+            named=$(sed -n 's/^[[:space:]]*-\{0,1\}[[:space:]]*url:[[:space:]]*//p' desktop/dist/latest.yml | head -1 | tr -d '\r' | sed 's/^["'"'"']//; s/["'"'"']$//')
+          fi
           echo "latest.yml points at: [$named]"
+          [ -n "$named" ] || { echo '::error::could not read the installer name from latest.yml'; cat desktop/dist/latest.yml; exit 1; }
           case "$named" in *" "*) echo "::error::installer name contains spaces — GitHub will rename it and self-update will 404"; exit 1;; esac
           echo "$assets" | grep -qxF "$named" || { echo "::error::latest.yml names '$named' but no such asset exists in the release"; exit 1; }
           echo "self-update metadata matches the uploaded installer ✓"
