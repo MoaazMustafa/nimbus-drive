@@ -118,10 +118,18 @@ class Supervisor extends EventEmitter {
       ? Number(base.port || WEB_PORT_DEFAULT)
       : WEB_PORT_DEFAULT;
 
+    const isPortFreeWithRetry = async (port, retries = 3, delayMs = 300) => {
+      for (let i = 0; i < retries; i++) {
+        if (await isPortFree(port)) return true;
+        if (i < retries - 1) await new Promise((r) => setTimeout(r, delayMs));
+      }
+      return false;
+    };
+
     // web port first (it's the user-facing one) — safe to heal at runtime:
     // `next start` honors PORT, and the tunnel gets a --url override.
     let webPort = wantWeb;
-    if (!(await isPortFree(webPort))) {
+    if (!(await isPortFreeWithRetry(webPort))) {
       const external = await this._detectNimbus(webPort, 'web');
       if (external) return { external };
       webPort = await findFreePort(wantWeb + 1);
@@ -133,7 +141,7 @@ class Supervisor extends EventEmitter {
     // app. If something else owns it: take over a stale Nimbus, otherwise stop
     // with a clear explanation instead of limping.
     const apiPort = wantApi;
-    if (!(await isPortFree(apiPort))) {
+    if (!(await isPortFreeWithRetry(apiPort))) {
       const external = await this._detectNimbus(apiPort, 'api');
       if (external) return { external };
       const suggestion = await findFreePort(wantApi + 1);

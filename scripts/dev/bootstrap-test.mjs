@@ -55,24 +55,38 @@ const home = await fsp.mkdtemp(path.join(os.tmpdir(), 'nimbus-home-'));
 // ── build a GitHub-style release tarball of THIS repo ───────────────
 console.log('\n— preparing mock release tarball (real repo contents)');
 const tgz = path.join(home, 'release.tgz');
-execSync(
-  `tar czf ${JSON.stringify(tgz)} --transform 's,^,nimbus-drive-mock1234/,' ` +
-    `--exclude=node_modules --exclude=.next --exclude=desktop --exclude=.git ` +
-    `--exclude=data --exclude=storage --exclude=.env ` +
-    `-C ${JSON.stringify(ROOT)} server web scripts package.json README.md`,
-  { stdio: 'ignore' }
-);
+const tarStaging = path.join(home, 'tar-staging', 'nimbus-drive-mock1234');
+await fsp.mkdir(tarStaging, { recursive: true });
+for (const item of ['server', 'web', 'scripts', 'package.json', 'README.md']) {
+  const src = path.join(ROOT, item);
+  const dest = path.join(tarStaging, item);
+  if (fs.existsSync(src)) {
+    await fsp.cp(src, dest, {
+      recursive: true,
+      filter: (p) => !p.includes('node_modules') && !p.includes('.next') && !p.includes('.git') && !p.includes('desktop') && !p.includes('data') && !p.includes('storage') && !p.endsWith('.env'),
+    });
+  }
+}
+execSync(`tar czf ${JSON.stringify(tgz)} -C ${JSON.stringify(path.join(home, 'tar-staging'))} nimbus-drive-mock1234`, { stdio: 'ignore' });
 check('tarball created', fs.existsSync(tgz) && fs.statSync(tgz).size > 10000);
 
 // ── fake node runtime tarball (for ensureNode download test) ────────
-const fakeNodeDir = path.join(home, 'fakedist', 'node-v22.15.0-linux-x64');
-await fsp.mkdir(path.join(fakeNodeDir, 'bin'), { recursive: true });
+const plat = process.platform === 'win32' ? 'win' : 'linux';
+const fakeNodeDir = path.join(home, 'fakedist', `node-v22.15.0-${plat}-x64`);
+const binSubDir = process.platform === 'win32' ? fakeNodeDir : path.join(fakeNodeDir, 'bin');
+await fsp.mkdir(binSubDir, { recursive: true });
+await fsp.mkdir(path.join(fakeNodeDir, 'node_modules', 'npm', 'bin'), { recursive: true });
 await fsp.mkdir(path.join(fakeNodeDir, 'lib', 'node_modules', 'npm', 'bin'), { recursive: true });
-await fsp.writeFile(path.join(fakeNodeDir, 'bin', 'node'), '#!/bin/sh\necho v22.15.0\n');
-await fsp.chmod(path.join(fakeNodeDir, 'bin', 'node'), 0o755);
+if (process.platform === 'win32') {
+  await fsp.copyFile(process.execPath, path.join(binSubDir, 'node.exe'));
+} else {
+  await fsp.writeFile(path.join(binSubDir, 'node'), '#!/bin/sh\necho v22.15.0\n');
+  await fsp.chmod(path.join(binSubDir, 'node'), 0o755);
+}
 await fsp.writeFile(path.join(fakeNodeDir, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'), '// stub\n');
-const fakeNodeTgz = path.join(home, 'fakedist', 'node-v22.15.0-linux-x64.tar.gz');
-execSync(`tar czf ${JSON.stringify(fakeNodeTgz)} -C ${JSON.stringify(path.join(home, 'fakedist'))} node-v22.15.0-linux-x64`, { stdio: 'ignore' });
+await fsp.writeFile(path.join(fakeNodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'), '// stub\n');
+const fakeNodeTgz = path.join(home, 'fakedist', `node-v22.15.0-${plat}-x64.tar.gz`);
+execSync(`tar czf ${JSON.stringify(fakeNodeTgz)} -C ${JSON.stringify(path.join(home, 'fakedist'))} node-v22.15.0-${plat}-x64`, { stdio: 'ignore' });
 
 // ── mock GitHub API + download host ─────────────────────────────────
 const mock = http.createServer((req, res) => {
@@ -127,16 +141,17 @@ try {
   check('repo without releases falls back to branch tip', nightly.kind === 'branch' && nightly.version === 'main-abcdef1' && nightly.tarballUrl.includes('/tarball/main'), JSON.stringify(nightly));
 
   console.log('\n— portable Node runtime (download → extract → locate → verify)');
-  const rt = await ensureNode({ homeDir: home, distBase: `http://127.0.0.1:${MOCK_PORT}/dist`, platform: 'linux', arch: 'x64' });
-  check('runtime downloaded and node located', rt.nodeBin.endsWith('/bin/node') && fs.existsSync(rt.nodeBin));
+  const rt = await ensureNode({ homeDir: home, distBase: `http://127.0.0.1:${MOCK_PORT}/dist`, platform: process.platform, arch: 'x64' });
+  check('runtime downloaded and node located', fs.existsSync(rt.nodeBin));
   check('npm-cli located inside runtime', rt.npmCli.endsWith('npm-cli.js') && fs.existsSync(rt.npmCli));
-  const rt2 = await ensureNode({ homeDir: home, distBase: 'http://127.0.0.1:1/unreachable', platform: 'linux', arch: 'x64' });
+  const rt2 = await ensureNode({ homeDir: home, distBase: 'http://127.0.0.1:1/unreachable', platform: process.platform, arch: 'x64' });
   check('second ensureNode reuses the cached runtime (no network)', rt2.nodeBin === rt.nodeBin);
 
   console.log('\n— full install: download → extract → deps → build → activate (REAL npm + next build, be patient)');
   // real system runtime for the heavy work
-  const realNpmCli = execSync(process.platform === 'win32' ? 'where npm' : 'realpath "$(which npm)"')
-    .toString().trim().split(/\r?\n/)[0];
+  const realNpmCli = process.platform === 'win32'
+    ? path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    : execSync('realpath "$(which npm)"').toString().trim().split(/\r?\n/)[0];
   const boot = new Bootstrap({ homeDir: home, runtime: { nodeBin: process.execPath, npmCli: realNpmCli } });
   boot.on('steplog', (l) => { globalThis.__lastLogLine = l.line; });
   const stepsSeen = [];

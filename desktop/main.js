@@ -483,10 +483,23 @@ function registerIpc() {
     return { ok: true };
   });
 
+function relaunchApp() {
+  quitting = true;
+  try {
+    if (supervisor) {
+      supervisor.stopAll().catch(() => {});
+      supervisor.close();
+    }
+  } catch { /* ignore */ }
+  app.relaunch();
+  app.exit(0);
+}
+
   // ── updates ──────────────────────────────────────────────────────
   ipcMain.handle('update:check', async () => {
     try {
       await checkForUpdate();
+      checkShellUpdate();
       return { ok: true, update: updateInfo, state: publicState() };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -496,17 +509,25 @@ function registerIpc() {
   ipcMain.handle('update:run', async () => {
     if (!isBootstrap() || !updateInfo) return { ok: false, error: 'No update available.' };
     if (installBusy) return { ok: false, error: 'An install is already running.' };
-    const wasRunning = supervisor?.running;
     const target = updateInfo;
     try {
       if (supervisor) await supervisor.stopAll();
       await runInstallFlow(target);
-      if (wasRunning || appConfig.startServicesOnLaunch) await supervisor.start();
+      if (bootstrap) await bootstrap.prune().catch(() => {});
       notify('Nimbus Drive updated', `Now running ${target.name || target.version}.`);
-      return { ok: true, state: publicState() };
+
+      if (autoUpdater && shellUpdate.status === 'ready') {
+        quitting = true;
+        autoUpdater.quitAndInstall(false, true);
+        return { ok: true, restarting: true, state: publicState() };
+      }
+
+      setTimeout(() => {
+        relaunchApp();
+      }, 1000);
+      return { ok: true, restarting: true, state: publicState() };
     } catch (err) {
-      // the failed version never activated — bring the old one back up
-      if (wasRunning && supervisor) await supervisor.start().catch(() => {});
+      if (supervisor) await supervisor.start().catch(() => {});
       return { ok: false, error: `Update failed (your current version is untouched): ${err.message}` };
     }
   });
@@ -705,6 +726,7 @@ if (!gotLock) {
       } catch { /* runtime re-download will be offered on demand */ }
       await bootstrap.materializeEnv(projectRoot).catch(() => {});
       createSupervisor();
+      bootstrap.prune().catch(() => {});
     } else if (appConfig.mode === 'checkout' && looksLikeProject(appConfig.projectRoot)) {
       projectRoot = appConfig.projectRoot;
       createSupervisor();

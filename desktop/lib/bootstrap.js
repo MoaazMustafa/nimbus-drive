@@ -274,13 +274,29 @@ class Bootstrap extends EventEmitter {
     return { version: prev.version, path: prev.path };
   }
 
-  /** Delete versions beyond current + previous. */
+  /** Delete all non-active version directories, staging folders, and downloaded archives. */
   async prune() {
     const cur = this.current();
-    const keep = new Set([cur?.path, this.previous()?.path].filter(Boolean));
-    for (const v of this.listVersions()) {
-      if (!keep.has(v.path)) await fsp.rm(v.path, { recursive: true, force: true }).catch(() => {});
-    }
+    if (!cur || !cur.path) return;
+    const activePath = path.resolve(cur.path);
+    try {
+      if (!fs.existsSync(this.versionsDir)) return;
+      const entries = await fsp.readdir(this.versionsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.resolve(this.versionsDir, entry.name);
+        if (fullPath === activePath) continue; // Keep ONLY the active version
+        try {
+          await fsp.rm(fullPath, { recursive: true, force: true });
+        } catch {
+          // Retry cleanup if Windows held a temporary lock
+          try {
+            const trashDir = `${fullPath}.trash_${Date.now()}`;
+            await safeMoveDir(fullPath, trashDir).catch(() => {});
+            await fsp.rm(trashDir, { recursive: true, force: true }).catch(() => {});
+          } catch { /* best effort */ }
+        }
+      }
+    } catch { /* best effort */ }
   }
 
   /** Rebuild the ACTIVE version's web app (needed when API_PORT changes). */

@@ -284,21 +284,6 @@ function renderUpdates() {
   if (info.previous) $("up-previous").textContent = info.previous.version;
   $("btn-run-update").disabled = info.busy;
   $("btn-rollback").disabled = info.busy;
-
-  // this app (the shell) — auto-updates in the background; restart applies it
-  const su = state.app.shellUpdate || {};
-  $("shell-version").textContent = `v${state.app.version}`;
-  const statusText =
-    su.status === "downloading"
-      ? `downloading update${su.progress != null ? ` ${su.progress}%` : ""}…`
-      : su.status === "ready"
-        ? `v${su.version} downloaded`
-        : su.fallback
-          ? "newer app available"
-          : "up to date · updates itself automatically";
-  $("shell-status").textContent = statusText;
-  $("btn-shell-restart").classList.toggle("hidden", su.status !== "ready");
-  $("btn-shell-download").classList.toggle("hidden", !su.fallback);
 }
 
 /* ── tabs ────────────────────────────────────────────── */
@@ -369,10 +354,15 @@ $("btn-check-update").addEventListener("click", async () => {
 });
 $("btn-run-update").addEventListener("click", async () => {
   resetSteps();
-  $("update-msg").textContent = "Updating — the drive will restart when it's done…";
+  $("btn-run-update").disabled = true;
+  $("update-msg").textContent = "Updating — the app will restart when finished…";
   const res = await nim.runUpdate();
-  if (!res.ok) $("update-msg").textContent = res.error || "Update failed.";
-  else {
+  if (!res.ok) {
+    $("btn-run-update").disabled = false;
+    $("update-msg").textContent = res.error || "Update failed.";
+  } else if (res.restarting) {
+    $("update-msg").textContent = "Updated ✓ Restarting app now…";
+  } else {
     state = res.state;
     render();
     resetSteps();
@@ -391,16 +381,6 @@ $("btn-rollback").addEventListener("click", async () => {
     setTimeout(() => { $("update-msg").textContent = ""; }, 6000);
   }
 });
-$("btn-shell-restart").addEventListener("click", async () => {
-  $("btn-shell-restart").disabled = true;
-  $("update-msg").textContent = "Restarting to update the app… (the drive comes back automatically)";
-  const res = await nim.shellUpdateInstall();
-  if (!res.ok) {
-    $("btn-shell-restart").disabled = false;
-    $("update-msg").textContent = res.error || "Could not restart.";
-  }
-});
-$("btn-shell-download").addEventListener("click", () => nim.openReleases());
 $("btn-rebuild").addEventListener("click", async () => {
   $("btn-rebuild").disabled = true;
   bannerDismissed = "";
@@ -542,6 +522,7 @@ $("btn-save").addEventListener("click", async () => {
     }
     state = res.state;
     render();
+    await loadConfigIntoForm().catch(() => {});
     if (res.restartNeeded) {
       $("save-status").textContent = "Saved — restarting to apply…";
       try {
