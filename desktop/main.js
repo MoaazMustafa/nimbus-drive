@@ -1,0 +1,649 @@
+'use strict';
+/**
+ * Nimbus Drive Desktop — Electron main process.
+ *
+ * Two ways to get a running drive, one control panel:
+ *  - BOOTSTRAP mode (new PCs): the app downloads the code from GitHub,
+ *    installs a private Node runtime + dependencies, builds, and runs it.
+ *    Updates come from GitHub Releases, with one-click rollback.
+ *  - CHECKOUT mode (developer machines): point the app at an existing
+ *    nimbus-drive folder and it supervises that.
+ */
+const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
+const { execFile } = require('node:child_process');
+const {
+  app,
+  BrowserWindow,
+  Tray,
+  Menu,
+  ipcMain,
+  dialog,
+  shell,
+  Notification,
+  nativeImage,
+} = require('electron');
+const { Supervisor } = require('./lib/supervisor');
+const { readEnv, updateEnv, createEnv, validateEnvValues, redirectUri } = require('./lib/env');
+const { Bootstrap } = require('./lib/bootstrap');
+const { GitHub, parseRepo } = require('./lib/github');
+const { ensureNode, ensureCloudflared } = require('./lib/runtime');
+
+// ── app config (lives in the OS per-user app-data dir) ──────────────
+const CONFIG_DEFAULTS = {
+  mode: null, // 'bootstrap' | 'checkout'
+  repo: '', // "owner/repo" (bootstrap mode)
+  projectRoot: null, // checkout mode
+  nodePath: 'node',
+  tunnelEnabled: false,
+  tunnelName: 'nimbus',
+  cloudflaredPath: 'cloudflared',
+  startServicesOnLaunch: true,
+};
+let configPath;
+let appConfig = { ...CONFIG_DEFAULTS };
+
+function loadConfig() {
+  configPath = path.join(app.getPath('userData'), 'desktop-config.json');
+  try {
+    appConfig = { ...CONFIG_DEFAULTS, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) };
+  } catch {
+    appConfig = { ...CONFIG_DEFAULTS };
+  }
+}
+function saveConfig() {
+  try {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify(appConfig, null, 2));
+  } catch { /* best-effort */ }
+}
+
+// ── globals ─────────────────────────────────────────────────────────
+let win = null;
+let tray = null;
+let supervisor = null;
+let bootstrap = null;
+let quitting = false;
+let projectRoot = null;
+let updateInfo = null; // {version, name, notes} when newer than installed
+let installBusy = false;
+const startHidden = process.argv.includes('--hidden');
+
+const homeDir = () => app.getPath('userData');
+const iconPath = () => path.join(__dirname, 'assets', 'icon.png');
+const isBootstrap = () => appConfig.mode === 'bootstrap';
+
+function looksLikeProject(root) {
+  return !!root && fs.existsSync(path.join(root, 'server', 'src', 'index.js')) && fs.existsSync(path.join(root, 'web'));
+}
+
+/** Where the canonical .env lives (bootstrap keeps it OUTSIDE versions). */
+function envPath() {
+  if (isBootstrap()) return bootstrap.canonicalEnvPath();
+  return projectRoot ? path.join(projectRoot, '.env') : null;
+}
+
+function which(cmd) {
+  return new Promise((resolve) => {
+    if (path.isAbsolute(cmd)) return resolve(fs.existsSync(cmd) ? cmd : null);
+    const probe = process.platform === 'win32' ? 'where' : 'which';
+    execFile(probe, [cmd], { windowsHide: true, timeout: 4000 }, (err, stdout) => {
+      resolve(err ? null : String(stdout).split(/\r?\n/)[0].trim() || null);
+    });
+  });
+}
+
+function notify(title, body) {
+  try {
+    if (Notification.isSupported()) new Notification({ title, body, icon: iconPath() }).show();
+  } catch { /* non-fatal */ }
+}
+
+// ── state assembly ──────────────────────────────────────────────────
+function tunnelConfigWarning(env) {
+  if (!appConfig.tunnelEnabled || !env) return null;
+  let baseHost;
+  try {
+    baseHost = new URL(env.BASE_URL).hostname;
+  } catch {
+    return 'BASE_URL is not a valid URL.';
+  }
+  if (baseHost === 'localhost' || baseHost === '127.0.0.1') {
+    return 'The tunnel is enabled but BASE_URL still points at localhost — set it to your public https:// domain so Google sign-in works remotely.';
+  }
+  for (const p of [path.join(os.homedir(), '.cloudflared', 'config.yml'), projectRoot && path.join(projectRoot, 'cloudflared', 'config.yml')].filter(Boolean)) {
+    try {
+      const txt = fs.readFileSync(p, 'utf8');
+      const hosts = [...txt.matchAll(/hostname:\s*(\S+)/g)].map((m) => m[1]);
+      if (hosts.length && !hosts.includes(baseHost)) {
+        return `BASE_URL host "${baseHost}" is not in ${p} (it routes: ${hosts.join(', ')}). Sign-in redirects will break until they match.`;
+      }
+      if (hosts.length) return null;
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+function publicState() {
+  const s = supervisor
+    ? supervisor.state()
+    : { overall: 'stopped', running: false, services: {}, env: { configured: false }, startError: null, external: null, publicOk: null };
+  const env = supervisor ? supervisor.env() : null;
+  const cur = isBootstrap() ? bootstrap.current() : null;
+  return {
+    ...s,
+    app: {
+      version: app.getVersion(),
+      mode: appConfig.mode,
+      repo: appConfig.repo,
+      projectRoot,
+      platform: process.platform,
+      packaged: app.isPackaged,
+      config: {
+        tunnelEnabled: appConfig.tunnelEnabled,
+        tunnelName: appConfig.tunnelName,
+        cloudflaredPath: appConfig.cloudflaredPath,
+        startServicesOnLaunch: appConfig.startServicesOnLaunch,
+        openAtLogin: app.getLoginItemSettings().openAtLogin,
+      },
+      localUrl: supervisor ? supervisor.localUrl() : 'http://localhost:3000',
+      redirectUri: env ? redirectUri(env.BASE_URL) : null,
+      tunnelWarning: tunnelConfigWarning(env),
+      install: isBootstrap()
+        ? {
+            busy: installBusy,
+            current: cur ? { version: cur.version, activatedAt: cur.activatedAt } : null,
+            previous: bootstrap.previous() ? { version: bootstrap.previous().version } : null,
+            update: updateInfo,
+            needsRebuild: cur ? bootstrap.needsRebuild() : false,
+          }
+        : null,
+    },
+  };
+}
+
+function pushState() {
+  if (win && !win.isDestroyed()) win.webContents.send('state', publicState());
+  updateTray();
+}
+function pushInstall(evt) {
+  if (win && !win.isDestroyed()) win.webContents.send('install', evt);
+}
+
+// ── supervisor / bootstrap wiring ───────────────────────────────────
+function createSupervisor() {
+  supervisor = new Supervisor({
+    projectRoot,
+    getAppConfig: () => ({
+      tunnelEnabled: appConfig.tunnelEnabled,
+      tunnelName: appConfig.tunnelName,
+      cloudflaredPath: appConfig.cloudflaredPath,
+      nodePath: appConfig.nodePath,
+    }),
+  });
+  supervisor.on('state', pushState);
+  supervisor.on('log', ({ proc, entry }) => {
+    if (win && !win.isDestroyed()) win.webContents.send('log', { proc, entry });
+  });
+  supervisor.on('service-failed', ({ name, error }) => {
+    notify('Nimbus Drive — service stopped', `${name}: ${error || 'crashed repeatedly'}`);
+  });
+  supervisor.on('public', (ok) => {
+    if (!ok) notify('Nimbus Drive — not reachable from the internet', 'The public URL is not responding. Check the tunnel and your connection.');
+  });
+}
+
+async function activateVersionDir(dir) {
+  if (supervisor) {
+    await supervisor.stopAll().catch(() => {});
+    supervisor.close();
+    supervisor = null;
+  }
+  projectRoot = dir;
+  await bootstrap.materializeEnv(dir).catch(() => {});
+  createSupervisor();
+}
+
+/** Make sure the private Node runtime exists (bootstrap mode). */
+async function ensureRuntime() {
+  pushInstall({ step: 'runtime', status: 'running', detail: 'Preparing the Node runtime…' });
+  const rt = await ensureNode({
+    homeDir: homeDir(),
+    onProgress: (p) => pushInstall({ step: 'runtime', status: 'running', detail: 'Downloading the Node runtime…', progress: p.percent }),
+  });
+  bootstrap.runtime = rt;
+  appConfig.nodePath = rt.nodeBin;
+  saveConfig();
+  pushInstall({ step: 'runtime', status: 'ok', detail: `Node runtime ready (${rt.version})` });
+  return rt;
+}
+
+async function runInstallFlow(release) {
+  installBusy = true;
+  pushState();
+  try {
+    await ensureRuntime();
+    const installed = await bootstrap.installVersion(release);
+    await activateVersionDir(installed.path);
+    updateInfo = null;
+    return installed;
+  } finally {
+    installBusy = false;
+    pushState();
+  }
+}
+
+async function checkForUpdate({ notifyUser = false } = {}) {
+  if (!isBootstrap() || !appConfig.repo) return null;
+  const parsed = parseRepo(appConfig.repo);
+  if (!parsed) return null;
+  const gh = new GitHub();
+  const latest = await gh.latestVersion(parsed.owner, parsed.repo);
+  updateInfo = bootstrap.updateAvailable(latest) ? latest : null;
+  if (updateInfo && notifyUser) {
+    notify('Nimbus Drive update available', `${updateInfo.name || updateInfo.version} is ready to install from the control panel.`);
+  }
+  pushState();
+  return updateInfo;
+}
+
+// ── window & tray ───────────────────────────────────────────────────
+function createWindow() {
+  win = new BrowserWindow({
+    width: 1080,
+    height: 740,
+    minWidth: 780,
+    minHeight: 560,
+    show: !startHidden,
+    backgroundColor: '#0b0f17',
+    icon: iconPath(),
+    title: 'Nimbus Drive',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  win.setMenuBarVisibility(false);
+  win.loadFile(path.join(__dirname, 'ui', 'index.html'));
+  win.on('close', (e) => {
+    if (!quitting) {
+      e.preventDefault();
+      win.hide(); // keep serving in the tray
+    }
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+}
+
+function updateTray() {
+  if (!tray) return;
+  const s = supervisor ? supervisor.state() : null;
+  const label = !s
+    ? 'Nimbus Drive'
+    : s.overall === 'online'
+      ? 'Nimbus Drive — online'
+      : s.overall === 'degraded'
+        ? 'Nimbus Drive — problem!'
+        : s.running
+          ? 'Nimbus Drive — starting…'
+          : 'Nimbus Drive — stopped';
+  tray.setToolTip(label);
+}
+
+function createTray() {
+  try {
+    const img = nativeImage.createFromPath(iconPath()).resize({ width: 16, height: 16 });
+    tray = new Tray(img);
+    const menu = Menu.buildFromTemplate([
+      { label: 'Open control panel', click: () => { win.show(); win.focus(); } },
+      {
+        label: 'Open my drive',
+        click: () => {
+          const env = supervisor?.env();
+          shell.openExternal(env?.BASE_URL?.startsWith('https://') ? env.BASE_URL : supervisor ? supervisor.localUrl() : 'http://localhost:3000');
+        },
+      },
+      { type: 'separator' },
+      { label: 'Start services', click: () => supervisor?.start() },
+      { label: 'Restart services', click: () => supervisor?.restart() },
+      { label: 'Stop services', click: () => supervisor?.stopAll() },
+      { type: 'separator' },
+      { label: 'Quit (stops the drive)', click: () => app.quit() },
+    ]);
+    tray.setContextMenu(menu);
+    tray.on('double-click', () => { win.show(); win.focus(); });
+    updateTray();
+  } catch (err) {
+    console.warn('[desktop] tray unavailable:', err.message);
+    tray = null;
+  }
+}
+
+// ── IPC ─────────────────────────────────────────────────────────────
+function registerIpc() {
+  ipcMain.handle('state:get', () => publicState());
+
+  ipcMain.handle('services:start', async () => {
+    if (supervisor) {
+      if (isBootstrap() && projectRoot) await bootstrap.materializeEnv(projectRoot).catch(() => {});
+      await supervisor.start();
+    }
+    return publicState();
+  });
+  ipcMain.handle('services:stop', async () => { if (supervisor) await supervisor.stopAll(); return publicState(); });
+  ipcMain.handle('services:restart', async () => { if (supervisor) await supervisor.restart(); return publicState(); });
+  ipcMain.handle('services:restartOne', async (_e, name) => {
+    if (supervisor && ['api', 'web', 'tunnel'].includes(name)) await supervisor.restartOne(name);
+    return publicState();
+  });
+  ipcMain.handle('external:takeover', async () => {
+    if (supervisor) {
+      await supervisor.killExternal();
+      await supervisor.start();
+    }
+    return publicState();
+  });
+
+  // ── first-run choices ────────────────────────────────────────────
+  ipcMain.handle('setup:install', async (_e, repoInput) => {
+    if (installBusy) return { ok: false, error: 'An install is already running.' };
+    const parsed = parseRepo(repoInput);
+    if (!parsed) return { ok: false, error: 'Enter the repository as owner/name (e.g. yourname/nimbus-drive) or a github.com link.' };
+    appConfig.mode = 'bootstrap';
+    appConfig.repo = `${parsed.owner}/${parsed.repo}`;
+    saveConfig();
+    try {
+      pushInstall({ step: 'find', status: 'running', detail: `Looking up ${appConfig.repo} on GitHub…` });
+      const gh = new GitHub();
+      const latest = await gh.latestVersion(parsed.owner, parsed.repo);
+      pushInstall({ step: 'find', status: 'ok', detail: `Found ${latest.name || latest.version}` });
+      await runInstallFlow(latest);
+      return { ok: true, state: publicState() };
+    } catch (err) {
+      pushInstall({ step: 'error', status: 'fail', detail: err.message });
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('setup:locate', async () => {
+    const res = await dialog.showOpenDialog(win, { title: 'Locate your nimbus-drive folder', properties: ['openDirectory'] });
+    if (res.canceled) return { ok: false };
+    const chosen = res.filePaths[0];
+    if (!looksLikeProject(chosen)) {
+      return { ok: false, error: 'That folder does not look like a Nimbus Drive project (server/src/index.js not found).' };
+    }
+    appConfig.mode = 'checkout';
+    appConfig.projectRoot = chosen;
+    appConfig.nodePath = 'node';
+    saveConfig();
+    projectRoot = chosen;
+    if (supervisor) supervisor.close();
+    createSupervisor();
+    pushState();
+    return { ok: true };
+  });
+
+  ipcMain.handle('install:cancel', () => {
+    bootstrap?.cancel();
+    return { ok: true };
+  });
+
+  // ── updates ──────────────────────────────────────────────────────
+  ipcMain.handle('update:check', async () => {
+    try {
+      await checkForUpdate();
+      return { ok: true, update: updateInfo, state: publicState() };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('update:run', async () => {
+    if (!isBootstrap() || !updateInfo) return { ok: false, error: 'No update available.' };
+    if (installBusy) return { ok: false, error: 'An install is already running.' };
+    const wasRunning = supervisor?.running;
+    const target = updateInfo;
+    try {
+      if (supervisor) await supervisor.stopAll();
+      await runInstallFlow(target);
+      if (wasRunning || appConfig.startServicesOnLaunch) await supervisor.start();
+      notify('Nimbus Drive updated', `Now running ${target.name || target.version}.`);
+      return { ok: true, state: publicState() };
+    } catch (err) {
+      // the failed version never activated — bring the old one back up
+      if (wasRunning && supervisor) await supervisor.start().catch(() => {});
+      return { ok: false, error: `Update failed (your current version is untouched): ${err.message}` };
+    }
+  });
+
+  ipcMain.handle('update:rollback', async () => {
+    if (!isBootstrap()) return { ok: false, error: 'Not available here.' };
+    try {
+      const wasRunning = supervisor?.running;
+      if (supervisor) await supervisor.stopAll();
+      const rolled = await bootstrap.rollback();
+      await activateVersionDir(rolled.path);
+      if (wasRunning || appConfig.startServicesOnLaunch) await supervisor.start();
+      await checkForUpdate().catch(() => {});
+      return { ok: true, state: publicState() };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('rebuild:run', async () => {
+    if (!isBootstrap()) return { ok: false, error: 'Not available here.' };
+    if (installBusy) return { ok: false, error: 'An install is already running.' };
+    installBusy = true;
+    pushState();
+    try {
+      const wasRunning = supervisor?.running;
+      if (supervisor) await supervisor.stopAll();
+      await ensureRuntime();
+      await bootstrap.rebuildActive();
+      if (wasRunning || appConfig.startServicesOnLaunch) await supervisor.start();
+      return { ok: true, state: publicState() };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    } finally {
+      installBusy = false;
+      pushState();
+    }
+  });
+
+  // ── configuration ────────────────────────────────────────────────
+  ipcMain.handle('config:get', () => {
+    const p = envPath();
+    if (!p) return { env: {}, configured: false, app: publicState().app };
+    const env = readEnv(p) || {};
+    return {
+      env: {
+        APP_NAME: env.APP_NAME || 'Nimbus Drive',
+        BASE_URL: env.BASE_URL || 'http://localhost:3000',
+        STORAGE_ROOT: env.STORAGE_ROOT || (isBootstrap() ? path.join(os.homedir(), 'NimbusDriveFiles') : path.join(projectRoot, 'storage')),
+        ADMIN_EMAIL: env.ADMIN_EMAIL || '',
+        GOOGLE_CLIENT_ID: env.GOOGLE_CLIENT_ID || '',
+        GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET || '',
+        API_PORT: env.API_PORT || '4400',
+      },
+      configured: !!readEnv(p),
+      app: publicState().app,
+    };
+  });
+
+  ipcMain.handle('config:save', async (_e, payload) => {
+    const p = envPath();
+    if (!p) return { ok: false, problems: [{ field: '', message: 'Install Nimbus Drive or locate your folder first.' }] };
+    const { env: envValues, app: appValues } = payload || {};
+    if (envValues) {
+      const problems = validateEnvValues(envValues, { projectRoot: projectRoot || homeDir() });
+      if (problems.length) return { ok: false, problems };
+      const defaults = isBootstrap() ? { DATA_DIR: path.join(homeDir(), 'data') } : {};
+      if (fs.existsSync(p)) updateEnv(p, envValues);
+      else createEnv(p, { ...defaults, ...envValues });
+      if (isBootstrap() && projectRoot) await bootstrap.materializeEnv(projectRoot);
+    }
+    if (appValues) {
+      // auto-fetch cloudflared for bootstrap users the first time they enable the tunnel
+      if (appValues.tunnelEnabled && isBootstrap()) {
+        const bin = appValues.cloudflaredPath || appConfig.cloudflaredPath;
+        if (!(await which(bin))) {
+          try {
+            pushInstall({ step: 'cloudflared', status: 'running', detail: 'Downloading cloudflared…' });
+            const got = await ensureCloudflared({
+              homeDir: homeDir(),
+              onProgress: (pr) => pushInstall({ step: 'cloudflared', status: 'running', detail: 'Downloading cloudflared…', progress: pr.percent }),
+            });
+            appValues.cloudflaredPath = got;
+            pushInstall({ step: 'cloudflared', status: 'ok', detail: 'cloudflared ready' });
+          } catch (err) {
+            pushInstall({ step: 'cloudflared', status: 'fail', detail: err.message });
+            return { ok: false, problems: [{ field: 'tunnel', message: `Could not download cloudflared: ${err.message}` }] };
+          }
+        }
+      }
+      for (const k of ['tunnelEnabled', 'tunnelName', 'cloudflaredPath', 'startServicesOnLaunch']) {
+        if (k in appValues) appConfig[k] = appValues[k];
+      }
+      saveConfig();
+      if ('openAtLogin' in appValues) {
+        const args = app.isPackaged ? ['--hidden'] : [path.resolve(__dirname), '--hidden'];
+        app.setLoginItemSettings({ openAtLogin: !!appValues.openAtLogin, args });
+      }
+    }
+    pushState();
+    return { ok: true, restartNeeded: !!supervisor?.running, state: publicState() };
+  });
+
+  ipcMain.handle('dialog:pickFolder', async (_e, current) => {
+    const res = await dialog.showOpenDialog(win, {
+      title: 'Choose the folder where your files will live',
+      defaultPath: current || undefined,
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    return res.canceled ? null : res.filePaths[0];
+  });
+
+  ipcMain.handle('logs:get', (_e, { proc, afterId, filter }) => {
+    const buf = supervisor?.logs[proc];
+    return buf ? buf.get({ afterId, filter, limit: 800 }) : [];
+  });
+  ipcMain.handle('logs:export', async (_e, proc) => {
+    const buf = supervisor?.logs[proc];
+    if (!buf) return { ok: false };
+    const res = await dialog.showSaveDialog(win, {
+      title: 'Export log',
+      defaultPath: path.join(app.getPath('downloads'), `nimbus-${proc}-log.txt`),
+    });
+    if (res.canceled || !res.filePath) return { ok: false };
+    fs.writeFileSync(res.filePath, buf.text());
+    return { ok: true, path: res.filePath };
+  });
+
+  ipcMain.handle('open:link', (_e, which_) => {
+    const env = supervisor?.env();
+    if (which_ === 'drive') {
+      const url = env?.BASE_URL?.startsWith('https://') ? env.BASE_URL : supervisor ? supervisor.localUrl() : 'http://localhost:3000';
+      return shell.openExternal(url);
+    }
+    if (which_ === 'google-console') return shell.openExternal('https://console.cloud.google.com/apis/credentials');
+    if (which_ === 'storage') {
+      const root = env?.STORAGE_ROOT || '';
+      const abs = path.isAbsolute(root) ? root : path.resolve(projectRoot || homeDir(), root || 'storage');
+      try { fs.mkdirSync(abs, { recursive: true }); } catch { /* ignore */ }
+      return shell.openPath(abs);
+    }
+    if (which_ === 'logs-folder') {
+      const env2 = supervisor?.env() || {};
+      const dd = env2.DATA_DIR
+        ? path.isAbsolute(env2.DATA_DIR) ? env2.DATA_DIR : path.resolve(projectRoot || homeDir(), env2.DATA_DIR)
+        : path.join(projectRoot || homeDir(), 'data');
+      return shell.openPath(path.join(dd, 'logs'));
+    }
+    return null;
+  });
+}
+
+// ── lifecycle ───────────────────────────────────────────────────────
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win) {
+      win.show();
+      win.focus();
+    }
+  });
+
+  app.whenReady().then(async () => {
+    loadConfig();
+    bootstrap = new Bootstrap({ homeDir: homeDir() });
+    bootstrap.on('step', (s) => pushInstall(s));
+    bootstrap.on('steplog', (l) => pushInstall({ step: l.step, status: 'log', detail: l.line }));
+
+    // resolve where the project lives
+    if (isBootstrap() && bootstrap.current()) {
+      projectRoot = bootstrap.current().path;
+      try {
+        bootstrap.runtime = await ensureNode({ homeDir: homeDir() }); // cached, instant
+        appConfig.nodePath = bootstrap.runtime.nodeBin;
+      } catch { /* runtime re-download will be offered on demand */ }
+      await bootstrap.materializeEnv(projectRoot).catch(() => {});
+      createSupervisor();
+    } else if (appConfig.mode === 'checkout' && looksLikeProject(appConfig.projectRoot)) {
+      projectRoot = appConfig.projectRoot;
+      createSupervisor();
+    } else {
+      const devGuess = path.resolve(__dirname, '..');
+      if (!app.isPackaged && looksLikeProject(devGuess)) {
+        appConfig.mode = 'checkout';
+        appConfig.projectRoot = devGuess;
+        saveConfig();
+        projectRoot = devGuess;
+        createSupervisor();
+      }
+    }
+
+    registerIpc();
+    createWindow();
+    createTray();
+
+    if (supervisor) {
+      const configured = !!readEnv(path.join(projectRoot, '.env'));
+      if (configured && appConfig.startServicesOnLaunch) supervisor.start().catch(() => {});
+    }
+
+    // update awareness: on launch and daily
+    checkForUpdate({ notifyUser: true }).catch(() => {});
+    const daily = setInterval(() => checkForUpdate({ notifyUser: true }).catch(() => {}), 24 * 3600 * 1000);
+    if (daily.unref) daily.unref();
+  });
+
+  app.on('activate', () => { if (win) win.show(); });
+
+  app.on('before-quit', async (e) => {
+    if (quitting) return;
+    quitting = true;
+    e.preventDefault();
+    try {
+      bootstrap?.cancel();
+      if (supervisor) {
+        await Promise.race([supervisor.stopAll(), new Promise((r) => setTimeout(r, 8000))]);
+        supervisor.close();
+      }
+    } finally {
+      app.exit(0);
+    }
+  });
+
+  app.on('window-all-closed', () => {
+    /* keep running in the tray */
+  });
+}

@@ -1,0 +1,51 @@
+{
+  "name": "nimbus-desktop",
+  "version": "1.0.0",
+  "description": "Nimbus Drive desktop control panel — configure, run, and monitor your self-hosted drive without a terminal",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:dir": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "app.nimbusdrive.desktop",
+    "productName": "Nimbus Drive",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**",
+      "ui/**",
+      "assets/**",
+      "package.json"
+    ],
+    "icon": "assets/icon.png",
+    "publish": {
+      "provider": "github"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "npmRebuild": false
+  }
+}

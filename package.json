@@ -10,7 +10,11 @@
     "start": "concurrently -k -n api,web -c blue,green \"npm --prefix server run start\" \"npm --prefix web run start\"",
     "tunnel:quick": "cloudflared tunnel --url http://localhost:3000",
     "test:e2e": "node scripts/dev/e2e.mjs",
-    "mock:google": "node scripts/dev/mock-google.mjs"
+    "test:desktop": "node scripts/dev/desktop-core-test.mjs",
+    "mock:google": "node scripts/dev/mock-google.mjs",
+    "desktop:install": "npm --prefix desktop install",
+    "desktop": "npm --prefix desktop start",
+    "desktop:dist": "npm --prefix desktop run dist"
   },
   "private": "true",
   "devDependencies": {

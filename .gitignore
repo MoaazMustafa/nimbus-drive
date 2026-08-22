@@ -2,12 +2,19 @@
 node_modules/
 web/.next/
 web/out/
+desktop/dist/
 
 # machine-specific config & runtime data
 .env
 .env.bak
 data/
 storage/
+# personal tunnel config — never publish (config.example.yml is the shareable one)
+cloudflared/config.yml
+cloudflared/cert.pem
+# local scratch
+scratch/
+_to_delete/
 
 # logs & OS noise
 *.log

@@ -41,6 +41,8 @@ npm start             # runs API + web  →  http://localhost:3000
 
 Sign in with the Google account you set as `ADMIN_EMAIL` — you're the owner. Add everyone else in **Admin → Allowlist**.
 
+Prefer **no terminal at all**? There's a desktop app that does everything — on a brand-new PC it's a single `Setup.exe` from this repo's Releases page that downloads the code, installs its own Node runtime, builds, walks through setup, runs the drive in the tray, and one-click updates itself from Releases (with rollback). See **[DESKTOP.md](DESKTOP.md)**.
+
 **[SETUP.md](SETUP.md)** has the full walkthrough: creating the Google OAuth keys, going public with a Cloudflare Tunnel + your domain, auto-start on boot, Docker, moving machines, troubleshooting.
 
 ## Project layout

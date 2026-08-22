@@ -1,0 +1,56 @@
+# Builds and publishes everything a release needs, automatically, when you
+# push a version tag:
+#
+#     git tag v1.0.0
+#     git push origin v1.0.0
+#
+#  1. runs the full test suites (server e2e + desktop supervision core)
+#  2. builds the Windows desktop installer (Nimbus Drive Setup.exe)
+#  3. attaches the installer to the GitHub Release for that tag
+#
+# New users then download ONE file — the Setup.exe from your Releases page —
+# and the app installs the drive itself. The app also checks this repo's
+# Releases for updates.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: |
+          npm --prefix server install --no-audit --no-fund
+          npm --prefix web install --no-audit --no-fund
+      - name: Build web app (needed by the desktop core test)
+        run: npm --prefix web run build
+      - name: Server end-to-end tests
+        run: node scripts/dev/e2e.mjs
+      - name: Desktop supervision core tests
+        run: node scripts/dev/desktop-core-test.mjs
+
+  installer:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install desktop app dependencies
+        run: npm --prefix desktop install --no-audit --no-fund
+      - name: Build and publish the Windows installer to this release
+        run: npx --prefix desktop electron-builder --win --publish always --project desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

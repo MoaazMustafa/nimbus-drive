@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'" />
+  <title>Nimbus Drive</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Welcome / first run -->
+  <section id="view-welcome" class="fullpane hidden">
+    <div class="welcome">
+      <div class="brand center">
+        <span class="brand-icon"><img src="../assets/icon.png" alt="" width="42" height="42" /></span>
+        <h1>Nimbus Drive</h1>
+        <p class="muted">Your own private cloud — files stay on this computer, reachable from anywhere.</p>
+      </div>
+
+      <div class="card accent" id="welcome-install">
+        <h2>Set up this PC</h2>
+        <p class="muted">The app downloads Nimbus Drive from GitHub and installs everything it needs — nothing else to install first.</p>
+        <div class="row" id="repo-row">
+          <input id="repo-input" type="text" class="mono grow" placeholder="owner/nimbus-drive  (or a github.com link)" />
+          <button id="btn-install" class="btn primary">Install</button>
+        </div>
+        <ul id="install-steps" class="steps hidden"></ul>
+        <div class="row hidden" id="install-actions">
+          <button id="btn-cancel-install" class="btn ghost small">Cancel</button>
+        </div>
+        <p id="install-error" class="error hidden"></p>
+      </div>
+
+      <div class="card">
+        <h2 class="muted-h">Already have the code on this PC?</h2>
+        <button id="btn-locate" class="btn ghost">Locate my nimbus-drive folder…</button>
+        <p id="locate-error" class="error hidden"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main app -->
+  <div id="view-main" class="hidden">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-icon"><img src="../assets/icon.png" alt="" width="26" height="26" /></span>
+        <span id="app-name">Nimbus Drive</span>
+      </div>
+      <span id="pill-overall" class="pill gray">stopped</span>
+      <a id="public-url" class="url muted" title="Your drive address"></a>
+      <button id="btn-copy-url" class="btn ghost small" title="Copy address">Copy</button>
+      <div class="spacer"></div>
+      <button id="btn-open-drive" class="btn ghost">Open drive</button>
+      <button id="btn-start" class="btn primary">Start</button>
+      <button id="btn-restart" class="btn ghost hidden">Restart</button>
+      <button id="btn-stop" class="btn danger-ghost hidden">Stop</button>
+    </header>
+
+    <div id="banner" class="banner hidden">
+      <span id="banner-text"></span>
+      <button id="btn-takeover" class="btn small primary hidden">Take over</button>
+      <button id="btn-rebuild" class="btn small primary hidden">Rebuild &amp; restart</button>
+      <button id="banner-close" class="btn ghost small">✕</button>
+    </div>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="logs">Logs</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </nav>
+
+    <!-- Overview -->
+    <main id="tab-overview" class="tabpane">
+      <div class="cards" id="service-cards"></div>
+
+      <div class="card hidden" id="updates-card">
+        <h2>Version &amp; updates</h2>
+        <div class="quick">
+          <div class="quick-row"><span class="muted">Installed</span><span id="up-current" class="mono"></span>
+            <button class="btn ghost small" id="btn-check-update">Check for updates</button>
+          </div>
+          <div class="quick-row hidden" id="up-available-row">
+            <span class="muted">Available</span><span id="up-available" class="mono"></span>
+            <button class="btn primary small" id="btn-run-update">Update now</button>
+          </div>
+          <div class="quick-row hidden" id="up-prev-row">
+            <span class="muted">Previous</span><span id="up-previous" class="mono"></span>
+            <button class="btn ghost small" id="btn-rollback">Roll back</button>
+          </div>
+        </div>
+        <pre id="up-notes" class="notes hidden"></pre>
+        <ul id="update-steps" class="steps hidden"></ul>
+        <p id="update-msg" class="muted small-note"></p>
+      </div>
+
+      <div class="card">
+        <h2>Quick access</h2>
+        <div class="quick">
+          <div class="quick-row"><span class="muted">Storage folder</span><span id="qa-storage" class="mono"></span><button class="btn ghost small" id="btn-open-storage">Open</button></div>
+          <div class="quick-row"><span class="muted">Public address</span><span id="qa-public" class="mono"></span><span id="qa-public-ok" class="chip hidden"></span></div>
+          <div class="quick-row"><span class="muted">Owner account</span><span id="qa-admin" class="mono"></span></div>
+          <div class="quick-row"><span class="muted">Log files</span><span class="mono">data/logs/</span><button class="btn ghost small" id="btn-open-logs">Open</button></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Logs -->
+    <main id="tab-logs" class="tabpane hidden">
+      <div class="logbar">
+        <div class="seg" id="log-procs">
+          <button data-proc="api" class="seg-btn active">API</button>
+          <button data-proc="web" class="seg-btn">Web</button>
+          <button data-proc="tunnel" class="seg-btn">Tunnel</button>
+          <button data-proc="app" class="seg-btn">App</button>
+        </div>
+        <input id="log-filter" type="text" placeholder="Filter…" />
+        <label class="check"><input type="checkbox" id="log-follow" checked /> Follow</label>
+        <button id="btn-log-export" class="btn ghost small">Export</button>
+      </div>
+      <pre id="log-view" class="logview" tabindex="0"></pre>
+    </main>
+
+    <!-- Settings (also serves as the first-run wizard) -->
+    <main id="tab-settings" class="tabpane hidden">
+      <div id="setup-hello" class="card accent hidden">
+        <h2>Set up your drive</h2>
+        <p class="muted">Three things and you're live: where files are stored, who owns the drive, and the Google sign-in keys (SETUP.md §2 shows how to create those — it takes ~5 minutes).</p>
+      </div>
+
+      <div class="card">
+        <h2>Drive configuration <span class="muted small-note">(saved to .env)</span></h2>
+        <div class="form">
+          <label>App name<input id="f-APP_NAME" type="text" /></label>
+          <label>Storage folder
+            <span class="row">
+              <input id="f-STORAGE_ROOT" type="text" class="mono" />
+              <button id="btn-pick-storage" class="btn ghost">Browse…</button>
+            </span>
+          </label>
+          <label>Owner Google email<input id="f-ADMIN_EMAIL" type="email" placeholder="you@gmail.com" /></label>
+          <label>Base URL <span class="hint">http://localhost:3000 locally, or your https:// domain</span><input id="f-BASE_URL" type="text" class="mono" /></label>
+          <label>Google Client ID<input id="f-GOOGLE_CLIENT_ID" type="text" class="mono" /></label>
+          <label>Google Client Secret
+            <span class="row">
+              <input id="f-GOOGLE_CLIENT_SECRET" type="password" class="mono" />
+              <button id="btn-reveal" class="btn ghost">Show</button>
+            </span>
+          </label>
+        </div>
+        <div class="callout">
+          <p><strong>Google redirect URI</strong> — must be added in <span class="linklike" id="link-google">Google Console → Credentials</span>:</p>
+          <p class="row"><code id="redirect-uri" class="mono grow"></code><button id="btn-copy-uri" class="btn ghost small">Copy</button></p>
+        </div>
+        <div id="form-errors" class="error hidden"></div>
+      </div>
+
+      <div class="card">
+        <h2>Desktop app</h2>
+        <div class="form">
+          <label class="check big"><input type="checkbox" id="f-tunnelEnabled" /> Run the Cloudflare Tunnel with the drive <span class="hint">(downloaded automatically if needed; SETUP.md §5 for the one-time tunnel login)</span></label>
+          <div class="row indent">
+            <label class="grow">Tunnel name<input id="f-tunnelName" type="text" class="mono" /></label>
+            <label class="grow">cloudflared path<input id="f-cloudflaredPath" type="text" class="mono" /></label>
+          </div>
+          <label class="check big"><input type="checkbox" id="f-startServicesOnLaunch" /> Start the drive when this app opens</label>
+          <label class="check big"><input type="checkbox" id="f-openAtLogin" /> Open this app (hidden, in the tray) when I sign in to Windows</label>
+        </div>
+      </div>
+
+      <div class="savebar">
+        <button id="btn-save" class="btn primary big">Save</button>
+        <span id="save-status" class="muted"></span>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
