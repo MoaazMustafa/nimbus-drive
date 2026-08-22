@@ -284,6 +284,43 @@ function renderUpdates() {
   if (info.previous) $("up-previous").textContent = info.previous.version;
   $("btn-run-update").disabled = info.busy;
   $("btn-rollback").disabled = info.busy;
+  renderShellUpdate();
+}
+
+/* The app's own version — separate from the drive code above. "Update now"
+   never touches this; it arrives via the self-updater or a new installer. */
+function renderShellUpdate() {
+  const su = state.app.shellUpdate || {};
+  if (!$("shell-version")) return;
+  $("shell-version").textContent = `v${state.app.version}`;
+  const statusText =
+    su.status === "downloading"
+      ? `downloading ${su.version || "update"}${su.progress != null ? ` — ${su.progress}%` : ""}…`
+      : su.status === "ready"
+        ? `v${su.version} downloaded — restart to finish`
+        : su.status === "error" && su.appOutdated
+          ? `${su.latestVersion} available — automatic update failed (${su.error || "unknown error"})`
+          : su.appOutdated
+            ? `${su.latestVersion} available — install it to update this app`
+            : "up to date · updates itself automatically";
+  $("shell-status").textContent = statusText;
+  $("btn-shell-restart").classList.toggle("hidden", su.status !== "ready");
+  $("btn-shell-download").classList.toggle("hidden", !su.fallback);
+}
+
+if ($("btn-shell-restart")) {
+  $("btn-shell-restart").addEventListener("click", async () => {
+    $("btn-shell-restart").disabled = true;
+    $("update-msg").textContent = "Restarting to update the app… (the drive comes back automatically)";
+    const res = await nim.shellUpdateInstall();
+    if (!res.ok) {
+      $("btn-shell-restart").disabled = false;
+      $("update-msg").textContent = res.error || "Could not restart.";
+    }
+  });
+}
+if ($("btn-shell-download")) {
+  $("btn-shell-download").addEventListener("click", () => nim.openReleases());
 }
 
 /* ── tabs ────────────────────────────────────────────── */

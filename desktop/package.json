@@ -1,7 +1,7 @@
 {
   "name": "nimbus-desktop",
   "version": "1.0.0",
-  "description": "Nimbus Drive desktop control panel — installs, runs, updates, and monitors your self-hosted drive without a terminal",
+  "description": "Nimbus Drive desktop control panel \u2014 installs, runs, updates, and monitors your self-hosted drive without a terminal",
   "author": "Moaaz Mustafa",
   "homepage": "https://github.com/MoaazMustafa/nimbus-drive",
   "repository": "github:MoaazMustafa/nimbus-drive",
@@ -58,6 +58,7 @@
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true
     },
-    "npmRebuild": false
+    "npmRebuild": false,
+    "artifactName": "Nimbus-Drive-Setup-${version}.${ext}"
   }
 }

@@ -30,6 +30,7 @@ const { Bootstrap } = require('./lib/bootstrap');
 const { GitHub, parseRepo } = require('./lib/github');
 const { ensureNode, ensureCloudflared } = require('./lib/runtime');
 const { runDiagnostics } = require('./lib/verify');
+const { isNewerVersion } = require('./lib/version');
 
 // The home of this app: where installs and updates come from. Baked in so a
 // new user never has to know or type it — Setup.exe → Install → done.
@@ -101,11 +102,20 @@ let installBusy = false;
 // next quit. Any failure degrades to a "download the new installer" link.
 let shellUpdate = { status: 'idle', version: null, progress: null, error: null };
 let autoUpdater = null;
+let latestReleaseTag = null; // newest tag on GitHub — used to notice an out-of-date shell
+
+/** Updater chatter goes into the App log so a silent failure is never invisible. */
+function updaterLog(msg) {
+  try {
+    supervisor?.appLog(`[app-update] ${String(msg).slice(0, 300)}`);
+  } catch { /* ignore */ }
+}
 
 function initShellUpdater() {
   if (!app.isPackaged || process.platform !== 'win32') return; // dev / non-win: nothing to do
   try {
     ({ autoUpdater } = require('electron-updater'));
+    autoUpdater.logger = { info: updaterLog, warn: updaterLog, error: updaterLog, debug: () => {} };
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true; // ignored prompt still applies on next restart
     autoUpdater.on('update-available', (info) => {
@@ -127,7 +137,9 @@ function initShellUpdater() {
     });
     autoUpdater.on('error', (err) => {
       // never fatal: the UI falls back to a manual installer link
-      shellUpdate = { status: 'error', version: shellUpdate.version, progress: null, error: String(err?.message || err).slice(0, 200) };
+      const msg = String(err?.message || err).slice(0, 200);
+      updaterLog(`update failed: ${msg}`);
+      shellUpdate = { status: 'error', version: shellUpdate.version, progress: null, error: msg };
       pushState();
     });
   } catch (err) {
@@ -234,13 +246,17 @@ function publicState() {
         : null,
       shellUpdate: {
         ...shellUpdate,
-        // fallback signal: a newer release exists but the auto-updater can't
-        // deliver it (dev build, or updater error) → offer the installer link
+        // A newer release exists than THIS app build. Computed from the release
+        // tag directly, so it stays true even when the auto-updater is broken,
+        // missing (old build), or the download 404s.
+        appOutdated: latestReleaseTag ? isNewerVersion(latestReleaseTag, app.getVersion()) : false,
+        latestVersion: latestReleaseTag,
+        // offer the manual installer whenever the updater is not actively
+        // delivering that newer version
         fallback:
-          !!updateInfo &&
-          updateInfo.version !== `v${app.getVersion()}` &&
-          updateInfo.version !== app.getVersion() &&
-          (shellUpdate.status === 'error' || (!autoUpdater && app.isPackaged)),
+          !!latestReleaseTag &&
+          isNewerVersion(latestReleaseTag, app.getVersion()) &&
+          !['downloading', 'ready'].includes(shellUpdate.status),
         releasesUrl: `https://github.com/${appConfig.repo || DEFAULT_REPO}/releases/latest`,
       },
     },
@@ -327,6 +343,7 @@ async function checkForUpdate({ notifyUser = false } = {}) {
   if (!parsed) return null;
   const gh = new GitHub();
   const latest = await gh.latestVersion(parsed.owner, parsed.repo);
+  latestReleaseTag = latest?.version || null;
   updateInfo = bootstrap.updateAvailable(latest) ? latest : null;
   if (updateInfo && notifyUser) {
     notify('Nimbus Drive update available', `${updateInfo.name || updateInfo.version} is ready to install from the control panel.`);

@@ -85,3 +85,11 @@ jobs:
           echo "Release $GITHUB_REF_NAME assets:"; echo "$assets"
           echo "$assets" | grep -q '\.exe$'    || { echo '::error::installer .exe missing from the release'; exit 1; }
           echo "$assets" | grep -q 'latest.yml' || { echo '::error::latest.yml (self-update metadata) missing from the release'; exit 1; }
+          # The self-updater downloads exactly the filename recorded in latest.yml.
+          # GitHub rewrites spaces in uploaded asset names, so a name with spaces
+          # silently 404s the update. Fail the build instead of shipping that.
+          named=$(grep -m1 '^  *path:' desktop/dist/latest.yml | sed 's/.*path: *//' | tr -d '\r')
+          echo "latest.yml points at: [$named]"
+          case "$named" in *" "*) echo "::error::installer name contains spaces — GitHub will rename it and self-update will 404"; exit 1;; esac
+          echo "$assets" | grep -qxF "$named" || { echo "::error::latest.yml names '$named' but no such asset exists in the release"; exit 1; }
+          echo "self-update metadata matches the uploaded installer ✓"
