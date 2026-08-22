@@ -41,8 +41,17 @@ jobs:
         run: node scripts/dev/desktop-core-test.mjs
       - name: Domain & sign-in verifier tests
         run: node scripts/dev/verify-test.mjs
+      - name: Install cloudflared (the config generator is checked against the real binary)
+        run: |
+          curl -fsSL -o /usr/local/bin/cloudflared \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /usr/local/bin/cloudflared
+          cloudflared --version
+        shell: bash
       - name: Cloudflare tunnel launch tests
         run: node scripts/dev/tunnel-test.mjs
+      - name: Tunnel config discovery & fallback tests
+        run: node scripts/dev/cfconfig-test.mjs
       - name: Install Playwright (renderer tests drive the real Settings UI)
         run: npm i --no-save playwright && npx playwright install --with-deps chromium
       - name: Settings persistence (renderer) tests

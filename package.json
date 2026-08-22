@@ -1,6 +1,6 @@
 {
   "name": "nimbus-drive",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "Self-hosted personal cloud drive \u2014 your files on your own machine, from anywhere",
   "scripts": {
     "setup": "node scripts/setup.mjs",

@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
 const { execFile } = require('node:child_process');
 const { readEnv, updateEnv } = require('./env');
+const { ensureNamedConfig, explain: explainTunnelConfig } = require('./cfconfig');
 const { isPortFree, findFreePort, findPidOnPort } = require('./ports');
 const { ManagedProcess } = require('./procman');
 const { LogBuffer } = require('./logbuf');
@@ -241,23 +242,66 @@ class Supervisor extends EventEmitter {
           }
           args = ['tunnel', 'run', '--token', token];
         } else if (mode === 'named') {
-          // Where the routing lives. The user's own ~/.cloudflared/config.yml is
-          // the machine's real configuration (it is what the cloudflared service
-          // uses too), so it wins over the copy bundled inside an installed
-          // version, which is only ever a template.
+          // Named mode resolves in three stages, so a machine that *can* run a
+          // tunnel never dead-ends on a missing text file:
+          //   1. a config that exists AND passes preflight
+          //   2. otherwise, write one from the credentials cloudflared already
+          //      created here (tunnel id from the credential, hostname from
+          //      BASE_URL, port from the running site)
+          //   3. otherwise, a saved tunnel token does the same job with no
+          //      local files at all
           const osHome = process.env.USERPROFILE || process.env.HOME || '';
           const userConfig = osHome ? path.join(osHome, '.cloudflared', 'config.yml') : null;
           const projConfig = path.join(root, 'cloudflared', 'config.yml');
-          const configToUse = (userConfig && fs.existsSync(userConfig)) ? userConfig
-            : (fs.existsSync(projConfig) ? projConfig : null);
+          const tunnelName = cfg.tunnelName || 'nimbus';
+
+          // 1 — the user's own config wins over any copy sitting in the source tree
+          let configToUse = null;
+          let brokenReason = null;
+          for (const cand of [userConfig, projConfig]) {
+            if (!cand || !fs.existsSync(cand)) continue;
+            try {
+              this._preflightNamedConfig(cand, tunnelName);
+              configToUse = cand;
+              break;
+            } catch (err) {
+              // remember the FIRST problem: it describes the config the user
+              // most likely believes is in use
+              if (!brokenReason) brokenReason = err.message;
+            }
+          }
+
+          // 2 — nothing usable on disk: build it rather than demand it
+          if (!configToUse && osHome) {
+            const envNow = readEnv(path.join(root, '.env')) || {};
+            const made = ensureNamedConfig({
+              home: osHome,
+              baseUrl: envNow.BASE_URL,
+              port: this.webPort || WEB_PORT_DEFAULT,
+              tunnelName,
+              // a config we already rejected must not be handed back to us
+              ignoreExisting: !!brokenReason,
+            });
+            if (made.path) {
+              configToUse = made.path;
+              if (made.created) {
+                if (made.replaced) this.appLog(`The old tunnel config did not work; it was kept as ${made.replaced}.`, 'warn');
+                this.appLog(`Wrote a tunnel config at ${made.path} for ${made.hostname} (tunnel ${made.tunnelId}) — no hand-editing needed.`, 'info');
+                this.appLog(`If the domain does not answer, the DNS record may still be missing: cloudflared tunnel route dns ${tunnelName} ${made.hostname}`, 'info');
+              }
+            } else if (!brokenReason) {
+              brokenReason = explainTunnelConfig(made, { tunnelName, home: osHome });
+            }
+          }
+
+          // 3 — fall back to the token, which needs none of the above
           if (!configToUse) {
-            throw new Error(
-              `Named tunnel mode needs a tunnel config, and none was found at\n` +
-              `  ${userConfig || '~/.cloudflared/config.yml'}\n\n` +
-              `Create one with "cloudflared tunnel login" then "cloudflared tunnel create ${cfg.tunnelName || 'nimbus'}" ` +
-              `(SETUP.md §5), or switch Tunnel Mode to "Permanent Custom Domain" in Settings and paste a tunnel token — ` +
-              `token mode needs no config file at all.`
-            );
+            const token = String(cfg.tunnelToken || '').trim();
+            if (token) {
+              this.appLog('No usable named-tunnel config on this PC — falling back to the saved tunnel token.', 'warn');
+              return { cmd: bin, args: ['tunnel', 'run', '--token', token], cwd: root };
+            }
+            throw new Error(brokenReason || explainTunnelConfig({ reason: 'no-login', detail: {} }, { tunnelName, home: osHome }));
           }
 
           // IMPORTANT: --config is a "tunnel command option", so it belongs
@@ -265,18 +309,14 @@ class Supervisor extends EventEmitter {
           //     cloudflared tunnel --config <file> run <name>
           // Putting it after `run` makes cloudflared exit immediately with
           // "Incorrect Usage: flag provided but not defined: -config".
-          args = ['tunnel'];
-          if (configToUse) {
-            this._preflightNamedConfig(configToUse, cfg.tunnelName || 'nimbus');
-            args.push('--config', configToUse);
-            // keep the tunnel pointed at the port the website is really on
-            try {
-              const txt = fs.readFileSync(configToUse, 'utf8');
-              const updated = txt.replace(/service:\s*http:\/\/(?:localhost|127\.0\.0\.1):\d+/g, `service: http://localhost:${this.webPort}`);
-              if (updated !== txt) fs.writeFileSync(configToUse, updated, 'utf8');
-            } catch { /* best effort */ }
-          }
-          args.push('run', cfg.tunnelName || 'nimbus');
+          args = ['tunnel', '--config', configToUse];
+          // keep the tunnel pointed at the port the website is really on
+          try {
+            const txt = fs.readFileSync(configToUse, 'utf8');
+            const updated = txt.replace(/service:\s*http:\/\/(?:localhost|127\.0\.0\.1):\d+/g, `service: http://localhost:${this.webPort}`);
+            if (updated !== txt) fs.writeFileSync(configToUse, updated, 'utf8');
+          } catch { /* best effort */ }
+          args.push('run', tunnelName);
         } else {
           // Quick Tunnel — instant free trycloudflare.com URL (address rotates)
           args = ['tunnel', '--url', `http://localhost:${this.webPort}`];
