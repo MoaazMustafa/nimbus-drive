@@ -11,8 +11,9 @@ Setup.exe  →  fetch code from GitHub  →  private Node runtime  →  install
 
 ## For a brand-new PC (the family story)
 
-1. Download **Nimbus Drive Setup.exe** from the repo's **Releases** page and run
-   it. (Unsigned build → SmartScreen shows "Windows protected your PC" once:
+1. Download **Nimbus-Drive-Setup-*.exe** from the newest release at
+   **https://github.com/MoaazMustafa/nimbus-drive/releases/latest** and run it.
+   (Unsigned build → SmartScreen shows "Windows protected your PC" once:
    click *More info → Run anyway*.)
 2. The app opens on a welcome screen with one button: **Install Nimbus Drive**.
    The repo (`MoaazMustafa/nimbus-drive`) is built into the app — nothing to

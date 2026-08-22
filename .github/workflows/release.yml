@@ -50,6 +50,12 @@ jobs:
           node-version: 22
       - name: Install desktop app dependencies
         run: npm --prefix desktop install --no-audit --no-fund
+      - name: Match the app version to the release tag
+        # electron-builder publishes to the release named after the app VERSION,
+        # not the git tag — without this sync, tagging v1.0.1 while package.json
+        # still says 1.0.0 quietly uploads the installer onto the old release.
+        shell: bash
+        run: npm --prefix desktop version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
       - name: Build and publish the Windows installer to this release
         # npm run (not npx): guarantees the LOCAL electron-builder with cwd=desktop
         run: npm --prefix desktop run dist:ci
