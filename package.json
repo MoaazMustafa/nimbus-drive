@@ -5,9 +5,9 @@
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "install:all": "npm install && npm --prefix server install && npm --prefix web install",
-    "dev": "concurrently -k -n api,web -c blue,green \"npm --prefix server run dev\" \"npm --prefix web run dev\"",
-    "build": "npm --prefix web run build",
-    "start": "concurrently -k -n api,web -c blue,green \"npm --prefix server run start\" \"npm --prefix web run start\"",
+    "dev": "node api.js && concurrently -k -n api,web -c blue,green \"npm --prefix server run dev\" \"npm --prefix web run dev\"",
+    "build": "node api.js && npm --prefix web run build",
+    "start": "node api.js && concurrently -k -n api,web -c blue,green \"npm --prefix server run start\" \"npm --prefix web run start\"",
     "tunnel:quick": "cloudflared tunnel --url http://localhost:3000",
     "test:e2e": "node scripts/dev/e2e.mjs",
     "test:desktop": "node scripts/dev/desktop-core-test.mjs",

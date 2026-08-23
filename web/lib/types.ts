@@ -11,6 +11,15 @@ export type Kind =
   | "slides"
   | "file";
 
+/** An attached folder or drive. The top level of the drive is a list of these. */
+export interface Library {
+  id: string;
+  name: string;
+  root: string;
+  isDefault: boolean;
+  available: boolean;
+}
+
 export interface Entry {
   name: string;
   path: string;
@@ -18,11 +27,19 @@ export interface Entry {
   size: number | null;
   mtime: number;
   kind: Kind;
+  /** present on the top-level entries when several folders are attached */
+  library?: Pick<Library, "id" | "name" | "isDefault" | "available">;
 }
 
 export interface Listing {
   path: string;
   entries: Entry[];
+  libraries?: Library[];
+}
+
+export interface LibrariesResponse {
+  libraries: Library[];
+  multi: boolean;
 }
 
 export interface Me {

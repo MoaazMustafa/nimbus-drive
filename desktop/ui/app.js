@@ -474,6 +474,84 @@ nim.onLog(({ proc, entry }) => {
 /* ── settings ────────────────────────────────────────── */
 const ENV_FIELDS = ["APP_NAME", "STORAGE_ROOT", "ADMIN_EMAIL", "BASE_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"];
 
+/* ── attached folders (STORAGE_ROOTS) ────────────────── */
+/* Stored as "Name=Path;Name=Path". Kept as a list here so the panel can add,
+   rename and remove without anyone editing a settings file by hand. */
+let extraRoots = [];
+
+function parseRoots(spec) {
+  return String(spec || "")
+    .split(/[;\n]+/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const eq = entry.indexOf("=");
+      return eq > 0
+        ? { name: entry.slice(0, eq).trim(), path: entry.slice(eq + 1).trim() }
+        : { name: "", path: entry };
+    })
+    .filter((r) => r.path);
+}
+function serializeRoots(list) {
+  return list
+    .filter((r) => r.path)
+    .map((r) => (r.name ? `${r.name}=${r.path}` : r.path))
+    .join("; ");
+}
+function renderRoots() {
+  const list = $("roots-list");
+  if (!list) return;
+  list.textContent = "";
+  if (!extraRoots.length) {
+    const li = document.createElement("li");
+    const head = document.createElement("span");
+    head.className = "head";
+    const why = document.createElement("span");
+    why.className = "why";
+    why.textContent = "No extra folders yet — the drive shows only the main folder.";
+    head.append(why);
+    li.append(document.createElement("span"), head);
+    list.append(li);
+    return;
+  }
+  extraRoots.forEach((root, i) => {
+    const li = document.createElement("li");
+    const mark = document.createElement("span");
+    mark.className = "mark ok";
+    mark.textContent = "•";
+
+    const head = document.createElement("span");
+    head.className = "head";
+    const name = document.createElement("input");
+    name.type = "text";
+    name.value = root.name || "";
+    name.placeholder = "Name in the sidebar";
+    name.className = "root-name";
+    name.addEventListener("input", () => { extraRoots[i].name = name.value; });
+    const where = document.createElement("span");
+    where.className = "why mono";
+    where.textContent = root.path;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn danger-ghost small";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => { extraRoots.splice(i, 1); renderRoots(); });
+    head.append(name, where, remove);
+    li.append(mark, head);
+    list.append(li);
+  });
+}
+if ($("btn-root-add")) {
+  $("btn-root-add").addEventListener("click", async () => {
+    const dir = await nim.pickFolder(null);
+    if (!dir) return;
+    if (extraRoots.some((r) => r.path === dir)) return;
+    const guess = dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Drive";
+    extraRoots.push({ name: guess, path: dir });
+    renderRoots();
+  });
+}
+
 function updateTunnelUI() {
   const enabled = $("f-tunnelEnabled").checked;
   const mode = $("f-tunnelMode").value;
@@ -496,6 +574,8 @@ async function loadConfigIntoForm() {
   $("f-tunnelToken").value = cfg.app.config.tunnelToken || "";
   $("f-tunnelName").value = cfg.app.config.tunnelName || "nimbus";
   $("f-cloudflaredPath").value = cfg.app.config.cloudflaredPath || "cloudflared";
+  extraRoots = parseRoots(cfg.env.STORAGE_ROOTS);
+  renderRoots();
   $("f-startServicesOnLaunch").checked = !!cfg.app.config.startServicesOnLaunch;
   $("f-openAtLogin").checked = !!cfg.app.config.openAtLogin;
   updateTunnelUI();
@@ -545,6 +625,7 @@ $("btn-save").addEventListener("click", async () => {
   try {
     const env = {};
     for (const k of ENV_FIELDS) env[k] = $(`f-${k}`).value.trim();
+    env.STORAGE_ROOTS = serializeRoots(extraRoots);
     const res = await nim.saveConfig({
       env,
       app: {

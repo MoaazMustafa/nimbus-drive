@@ -5,8 +5,16 @@ import { pipeline } from 'node:stream/promises';
 import mime from 'mime-types';
 import config from './config.js';
 import { httpError } from './util.js';
+import { splitLibraryPath, canonicalPath } from './libraries.js';
 
+const LIBRARIES = config.libraries;
+const MULTI = config.multiLibrary;
 const ROOT = path.resolve(config.storageRoot);
+
+/** The attached folders, as the API and the sidebar see them. */
+export function libraries() {
+  return LIBRARIES.map(({ id, name, root, isDefault, available }) => ({ id, name, root, isDefault, available }));
+}
 
 /** Convert any client-supplied path to a safe relative POSIX path ('' = root). */
 export function cleanRel(input) {
@@ -19,12 +27,31 @@ export function cleanRel(input) {
   return parts.join('/');
 }
 
-/** Resolve a relative path to an absolute path guaranteed to live inside STORAGE_ROOT. */
+/**
+ * Resolve a relative path to an absolute path guaranteed to live inside one of
+ * the attached folders.
+ *
+ * With a single folder attached this behaves exactly as it always has, and
+ * paths stay unprefixed. With several, the first segment names the folder —
+ * and a path with no such prefix still resolves against the first one, so
+ * links and trash entries created before this feature keep working.
+ */
 export function resolveSafe(input) {
-  const rel = cleanRel(input);
-  const abs = rel ? path.resolve(ROOT, ...rel.split('/')) : ROOT;
-  if (abs !== ROOT && !abs.startsWith(ROOT + path.sep)) throw httpError(400, 'Invalid path');
-  return { abs, rel };
+  const cleaned = cleanRel(input);
+  if (!MULTI) {
+    const abs = cleaned ? path.resolve(ROOT, ...cleaned.split('/')) : ROOT;
+    if (abs !== ROOT && !abs.startsWith(ROOT + path.sep)) throw httpError(400, 'Invalid path');
+    return { abs, rel: cleaned, library: LIBRARIES[0] || null };
+  }
+  if (!cleaned) {
+    throw httpError(400, 'Pick one of your attached folders first — the top level just lists them.');
+  }
+  const { library, sub } = splitLibraryPath(cleaned, LIBRARIES);
+  if (!library) throw httpError(400, 'Invalid path');
+  const libRoot = path.resolve(library.root);
+  const abs = sub.length ? path.resolve(libRoot, ...sub) : libRoot;
+  if (abs !== libRoot && !abs.startsWith(libRoot + path.sep)) throw httpError(400, 'Invalid path');
+  return { abs, rel: canonicalPath(library, sub), library };
 }
 
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
@@ -73,6 +100,24 @@ export function kindOf(name, isDir) {
 
 /** List a directory inside the storage root. */
 export async function listDir(rel) {
+  if (MULTI && !cleanRel(rel)) {
+    // The top level is the list of attached folders, not a directory on disk.
+    const entries = [];
+    for (const lib of LIBRARIES) {
+      let mtime = 0;
+      try { mtime = (await fsp.stat(lib.root)).mtimeMs; } catch { /* away right now */ }
+      entries.push({
+        name: lib.name,
+        path: lib.id,
+        isDir: true,
+        size: null,
+        mtime,
+        kind: 'folder',
+        library: { id: lib.id, name: lib.name, isDefault: lib.isDefault, available: !!lib.available },
+      });
+    }
+    return { path: '', entries, libraries: libraries() };
+  }
   const { abs, rel: cleaned } = resolveSafe(rel);
   const st = await statOrNull(abs);
   if (!st) throw httpError(404, 'Folder not found');
@@ -199,7 +244,7 @@ export async function searchFiles(query, { maxResults = 200, maxVisited = 50000 
     if (results.length >= maxResults || visited >= maxVisited) return;
     let entries;
     try {
-      entries = await fsp.readdir(relDir ? path.join(ROOT, ...relDir.split('/')) : ROOT, { withFileTypes: true });
+      entries = await fsp.readdir(resolveSafe(relDir).abs, { withFileTypes: true });
     } catch {
       return;
     }
@@ -212,7 +257,7 @@ export async function searchFiles(query, { maxResults = 200, maxVisited = 50000 
         let size = null;
         let mtime = 0;
         try {
-          const s = await fsp.stat(path.join(ROOT, ...relPath.split('/')));
+          const s = await fsp.stat(resolveSafe(relPath).abs);
           size = isDir ? null : s.size;
           mtime = s.mtimeMs;
         } catch { /* ignore */ }
@@ -221,7 +266,14 @@ export async function searchFiles(query, { maxResults = 200, maxVisited = 50000 
       if (isDir) await walk(relPath);
     }
   }
-  await walk('');
+  if (MULTI) {
+    for (const lib of LIBRARIES) {
+      if (!lib.available) continue;
+      await walk(lib.id);
+    }
+  } else {
+    await walk('');
+  }
   return { results, truncated: visited >= maxVisited || results.length >= maxResults };
 }
 

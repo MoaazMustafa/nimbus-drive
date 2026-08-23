@@ -42,7 +42,7 @@
       "releaseType": "release"
     },
     "win": {
-      "requestedExecutionLevel": "highestAvailable",
+      "requestedExecutionLevel": "asInvoker",
       "target": [
         {
           "target": "nsis",
@@ -54,7 +54,8 @@
     },
     "nsis": {
       "oneClick": true,
-      "allowElevation": true,
+      "allowElevation": false,
+      "perMachine": false,
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true
     },
