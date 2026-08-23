@@ -33,6 +33,7 @@ const { runDiagnostics } = require('./lib/verify');
 const cfTunnel = require('./lib/cftunnel');
 const { hostnameFromBaseUrl } = require('./lib/cfconfig');
 const { isNewerVersion } = require('./lib/version');
+const { applyWindowsStartup, isAutostartLaunch, startupScriptPath } = require('./lib/autostart');
 
 // The home of this app: where installs and updates come from. Baked in so a
 // new user never has to know or type it — Setup.exe → Install → done.
@@ -71,21 +72,13 @@ function saveConfig() {
 }
 
 function configureWindowsStartup(enable) {
-  if (process.platform !== 'win32') return;
-  const startupDir = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
-  const vbsPath = path.join(startupDir, 'NimbusDriveAutoStart.vbs');
-  if (enable) {
-    try {
-      const exePath = app.getPath('exe');
-      const vbsContent = `Set WshShell = CreateObject("WScript.Shell")\r\nWshShell.Run """" & "${exePath.replace(/\\/g, '\\\\')}" & """ --hidden --autostart", 0, False\r\n`;
-      fs.mkdirSync(startupDir, { recursive: true });
-      fs.writeFileSync(vbsPath, vbsContent, 'utf8');
-    } catch { /* best-effort */ }
-  } else {
-    try {
-      if (fs.existsSync(vbsPath)) fs.unlinkSync(vbsPath);
-    } catch { /* best-effort */ }
-  }
+  if (process.platform !== 'win32') return { ok: true, action: 'absent', path: null };
+  return applyWindowsStartup({
+    appData: process.env.APPDATA || '',
+    exePath: app.getPath('exe'),
+    enable,
+    fs,
+  });
 }
 
 // ── globals ─────────────────────────────────────────────────────────
@@ -236,7 +229,11 @@ function publicState() {
         tunnelName: appConfig.tunnelName,
         cloudflaredPath: appConfig.cloudflaredPath,
         startServicesOnLaunch: appConfig.startServicesOnLaunch,
-        openAtLogin: app.getLoginItemSettings().openAtLogin,
+        // on Windows the startup script IS the setting — the login item is
+        // deliberately left off, so asking Electron would always say "no"
+        openAtLogin: process.platform === 'win32'
+          ? fs.existsSync(startupScriptPath(process.env.APPDATA || ''))
+          : app.getLoginItemSettings().openAtLogin,
       },
       localUrl: supervisor ? supervisor.localUrl() : 'http://localhost:3000',
       redirectUri: env ? redirectUri(env.BASE_URL) : null,
@@ -743,6 +740,8 @@ function relaunchApp() {
         ADMIN_EMAIL: env.ADMIN_EMAIL || '',
         GOOGLE_CLIENT_ID: env.GOOGLE_CLIENT_ID || '',
         GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET || '',
+        // extra attached folders, "Name=Path; Name=Path"
+        STORAGE_ROOTS: env.STORAGE_ROOTS || '',
         API_PORT: env.API_PORT || '4400',
       },
       configured: !!readEnv(p),
@@ -799,8 +798,15 @@ function relaunchApp() {
       saveConfig();
       if ('openAtLogin' in appValues) {
         const args = app.isPackaged ? ['--hidden', '--autostart'] : [path.resolve(__dirname), '--hidden', '--autostart'];
-        app.setLoginItemSettings({ openAtLogin: !!appValues.openAtLogin, args });
-        configureWindowsStartup(!!appValues.openAtLogin);
+        if (process.platform === 'win32') {
+          // ONE mechanism on Windows. Setting the login item as well launched a
+          // second copy at logon, and the loser of the single-instance race
+          // still nudged the winner into showing its window.
+          app.setLoginItemSettings({ openAtLogin: false });
+          configureWindowsStartup(!!appValues.openAtLogin);
+        } else {
+          app.setLoginItemSettings({ openAtLogin: !!appValues.openAtLogin, args });
+        }
       }
     }
     pushState();
@@ -861,7 +867,11 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    // A person double-clicking the app wants the window. A stray autostart
+    // launch does not — surfacing it there is exactly what "no touch required"
+    // is supposed to avoid.
+    if (isAutostartLaunch(argv || [])) return;
     if (win) {
       win.show();
       win.focus();

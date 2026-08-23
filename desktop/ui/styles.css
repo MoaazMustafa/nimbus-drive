@@ -152,6 +152,15 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface2);
 .card.inner h3 { margin: 0; font-size: 13px; font-weight: 650; }
 .card.inner .row { gap: 8px; align-items: center; flex-wrap: wrap; }
 .card.inner .checks { margin-top: 10px; }
+/* the attached-folders rows: editable name, path, remove */
+#roots-list .head { gap: 8px; }
+#roots-list .root-name {
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 7px; padding: 3px 8px; width: 190px; font-size: 12.5px;
+  outline: none; color: var(--text);
+}
+#roots-list .root-name:focus { border-color: var(--accent-deep); box-shadow: 0 0 0 3px var(--accent-soft); }
+#roots-list .why.mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .small-note { font-weight: 400; font-size: 12px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 

@@ -21,6 +21,36 @@ const SKIP = 'skip';
 
 const r = (id, label, status, detail, fix) => ({ id, label, status, detail, fix: fix || null });
 
+/**
+ * Does this hostname resolve? Ask more than one way.
+ *
+ * dns.resolve() talks to the configured nameservers directly (c-ares). On a PC
+ * behind a VPN, a corporate resolver, or a DNS client that only answers over
+ * the loopback, that path can fail with ECONNREFUSED while the machine resolves
+ * names perfectly well through the OS — which is why this also tries
+ * dns.lookup(), the same call the browser effectively makes.
+ */
+async function resolveHostname(dns, hostname) {
+  const tried = [];
+  const ways = [
+    ['A record', 'resolve4', () => dns.resolve4(hostname)],
+    ['DNS', 'resolve', () => dns.resolve(hostname)],
+    ['AAAA record', 'resolve6', () => dns.resolve6(hostname)],
+    ['CNAME', 'resolveCname', () => dns.resolveCname(hostname)],
+    ['this PC\'s resolver', 'lookup', async () => (await dns.lookup(hostname, { all: true })).map((a) => a.address)],
+  ];
+  for (const [how, method, fn] of ways) {
+    if (typeof dns[method] !== 'function') continue;
+    try {
+      const addrs = await fn();
+      if (Array.isArray(addrs) && addrs.length) return { ok: true, how, addrs };
+    } catch (err) {
+      tried.push(`${how}: ${err && (err.code || err.message)}`);
+    }
+  }
+  return { ok: false, tried };
+}
+
 async function probe(fetchImpl, url, { ms = 9000, redirect = 'follow' } = {}) {
   try {
     const res = await fetchImpl(url, {
@@ -123,15 +153,13 @@ async function runDiagnostics(opts = {}) {
   }
 
   // 4 ── does the DNS name exist at all?
-  let dnsOk = false;
-  try {
-    const addrs = await dns.resolve(base.hostname);
-    dnsOk = Array.isArray(addrs) && addrs.length > 0;
-    checks.push(r('dns', 'Domain name', OK, `${base.hostname} resolves (${addrs.slice(0, 2).join(', ')})`));
-  } catch (err) {
-    checks.push(r('dns', 'Domain name', FAIL, `${base.hostname} does not resolve (${err.code || err.message})`,
-      'In the Cloudflare dashboard add a DNS record for this hostname pointing at your tunnel (CNAME → <tunnel-id>.cfargotunnel.com, proxied).'));
-  }
+  const dnsRes = await resolveHostname(dns, base.hostname);
+  const dnsOk = dnsRes.ok;
+  const dnsCheck = dnsOk
+    ? r('dns', 'Domain name', OK, `${base.hostname} resolves via ${dnsRes.how} (${dnsRes.addrs.slice(0, 2).join(', ')})`)
+    : r('dns', 'Domain name', FAIL, `${base.hostname} does not resolve (${(dnsRes.tried || []).join('; ') || 'no answer'})`,
+        'In the Cloudflare dashboard add a DNS record for this hostname pointing at your tunnel (CNAME → <tunnel-id>.cfargotunnel.com, proxied).');
+  checks.push(dnsCheck);
 
   // 5 ── routing: does the tunnel config actually carry THIS hostname to THIS port?
   const cfg = tunnelMode === 'token' ? null : readTunnelConfig({ projectRoot, homeDir });
@@ -168,6 +196,16 @@ async function runDiagnostics(opts = {}) {
       'Make sure only one machine serves this hostname.'));
   } else {
     checks.push(r('public', 'Reachable from the internet', OK, `${baseRaw} is live and served by THIS PC`));
+  }
+
+  // A reachable public address is direct proof the name resolves — the internet
+  // just used it. If the local DNS probe disagreed, the probe is what is wrong,
+  // and reporting "does not resolve" next to "is live" only sends people to fix
+  // DNS that is already correct.
+  if (pubOk && dnsCheck.status === FAIL) {
+    dnsCheck.status = WARN;
+    dnsCheck.detail = `${base.hostname} is resolving — the address answered over the internet — but this PC could not query it directly (${(dnsRes.tried || []).join('; ')})`;
+    dnsCheck.fix = 'Nothing to fix for the people using your drive. This is usually a VPN, a corporate or custom DNS server, or a DNS client on this PC that refuses direct queries.';
   }
 
   // 7 ── sign-in keys present

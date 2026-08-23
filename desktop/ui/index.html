@@ -156,6 +156,15 @@
               <button id="btn-pick-storage" class="btn ghost">Browse…</button>
             </span>
           </label>
+          <div class="card inner" id="roots-panel">
+            <div class="row">
+              <h3 class="grow">Attached folders</h3>
+              <button id="btn-root-add" class="btn secondary small" type="button">Add a folder or drive</button>
+            </div>
+            <p class="muted small-note">Everything above lives in the main folder. Attach more drives here and each one appears in the sidebar of the drive under its own name.</p>
+            <ul id="roots-list" class="checks"></ul>
+          </div>
+
           <label>Owner Google email<input id="f-ADMIN_EMAIL" type="email" placeholder="you@gmail.com" /></label>
           <label>Base URL <span class="hint">http://localhost:3000 locally, or your https:// domain</span><input id="f-BASE_URL" type="text" class="mono" /></label>
           <div class="row items-center justify-between mt-2">

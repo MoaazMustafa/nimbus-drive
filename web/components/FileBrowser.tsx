@@ -22,7 +22,7 @@ import {
   Check,
 } from "lucide-react";
 import { downloadUrl, downloadZip, enc, formatBytes, formatDate, streamUrl, thumbUrl, triggerDownload } from "@/lib/api";
-import { useListing, useLiveFolder } from "@/lib/hooks";
+import { useListing, useLiveFolder, useLibraries } from "@/lib/hooks";
 import { uploadMany, tasksFromFileList, tasksFromDataTransfer, type UploadItem } from "@/lib/upload";
 import type { Entry } from "@/lib/types";
 import { ItemIcon } from "./ItemIcon";
@@ -153,6 +153,12 @@ export function FileBrowser({
   onConsumedPreview?: () => void;
 }) {
   const { data, error, isLoading, mutate } = useListing(path, true);
+  const { data: libData } = useLibraries(true);
+  const multiLibrary = !!libData?.multi && (libData?.libraries?.length ?? 0) > 1;
+  const libraryName = useCallback(
+    (id: string) => libData?.libraries?.find((l) => l.id === id)?.name,
+    [libData]
+  );
   const [view, setView] = useState<ViewMode>("grid");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [dragOver, setDragOver] = useState(false);
@@ -235,11 +241,17 @@ export function FileBrowser({
 
   const crumbs = useMemo(() => {
     const parts = path ? path.split("/") : [];
+    // With several folders attached the top level is the list of them, and the
+    // first segment is a folder id — show the folder's real name instead.
+    const rootLabel = multiLibrary ? "Folders" : "My Drive";
     return [
-      { name: "My Drive", path: "" },
-      ...parts.map((p, i) => ({ name: p, path: parts.slice(0, i + 1).join("/") })),
+      { name: rootLabel, path: "" },
+      ...parts.map((p, i) => ({
+        name: i === 0 && multiLibrary ? (libraryName(p) ?? p) : p,
+        path: parts.slice(0, i + 1).join("/"),
+      })),
     ];
-  }, [path]);
+  }, [path, multiLibrary, libraryName]);
 
   const doUpload = useCallback(
     (tasks: { file: File; relSub: string }[]) => {

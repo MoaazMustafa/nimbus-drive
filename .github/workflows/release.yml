@@ -37,10 +37,14 @@ jobs:
         run: npm --prefix web run build
       - name: Server end-to-end tests
         run: node scripts/dev/e2e.mjs
+      - name: Multiple attached folders tests
+        run: node scripts/dev/libraries-test.mjs
       - name: Desktop supervision core tests
         run: node scripts/dev/desktop-core-test.mjs
       - name: Domain & sign-in verifier tests
         run: node scripts/dev/verify-test.mjs
+      - name: Windows autostart / no-UAC tests
+        run: node scripts/dev/autostart-test.mjs
       - name: Install cloudflared (the config generator is checked against the real binary)
         run: |
           curl -fsSL -o /usr/local/bin/cloudflared \

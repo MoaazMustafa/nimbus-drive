@@ -8,7 +8,7 @@
   "main": "main.js",
   "private": true,
   "scripts": {
-    "start": "electron .",
+    "start": "node init && electron .",
     "dist": "electron-builder --win",
     "dist:dir": "electron-builder --dir",
     "dist:build": "electron-builder --win --publish never"
@@ -42,7 +42,7 @@
       "releaseType": "release"
     },
     "win": {
-      "requestedExecutionLevel": "highestAvailable",
+      "requestedExecutionLevel": "asInvoker",
       "target": [
         {
           "target": "nsis",
@@ -54,7 +54,8 @@
     },
     "nsis": {
       "oneClick": true,
-      "allowElevation": true,
+      "allowElevation": false,
+      "perMachine": false,
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true
     },

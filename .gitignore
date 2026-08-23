@@ -5,7 +5,6 @@ web/out/
 desktop/dist/
 
 # machine-specific config & runtime data
-.env
 .env.bak
 data/
 storage/
@@ -20,3 +19,7 @@ _to_delete/
 *.log
 .DS_Store
 Thumbs.db
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+config.bat
