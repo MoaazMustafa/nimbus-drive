@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import { fetcher, ApiError, parentOf } from "./api";
-import type { Listing, Me, Stats } from "./types";
+import type { LibrariesResponse, Listing, Me, Stats } from "./types";
 
 /** Current user. Redirects to /login when the session is missing/expired. */
 export function useMe(redirect = true) {
@@ -26,6 +26,14 @@ export function useMe(redirect = true) {
 export function useListing(path: string, enabled: boolean) {
   return useSWR<Listing>(enabled ? `/api/fs/list?path=${encodeURIComponent(path)}` : null, fetcher, {
     keepPreviousData: true,
+  });
+}
+
+/** The attached folders. Rarely changes, so it is cached hard. */
+export function useLibraries(enabled: boolean) {
+  return useSWR<LibrariesResponse>(enabled ? "/api/fs/libraries" : null, fetcher, {
+    revalidateOnFocus: false,
+    dedupingInterval: 60_000,
   });
 }
 

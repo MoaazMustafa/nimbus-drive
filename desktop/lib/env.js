@@ -70,6 +70,12 @@ BASE_URL=${v.BASE_URL || 'http://localhost:3000'}
 # Where your files live on this machine's disk.
 STORAGE_ROOT=${v.STORAGE_ROOT || './storage'}
 
+# Extra folders or drives to attach, as "Name=Path", separated by ";".
+# Each one shows up in the drive's sidebar under its own name. Manage this from
+# Settings → Attached folders rather than by hand.
+#   STORAGE_ROOTS=Family Photos=D:\\Photos; Movies=E:\\Media\\Movies
+STORAGE_ROOTS=${v.STORAGE_ROOTS || ''}
+
 # App data (database, thumbnails cache, trash) — safe to keep next to the app.
 DATA_DIR=${v.DATA_DIR || './data'}
 
