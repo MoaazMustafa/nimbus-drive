@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { Avatar, Button, Dropdown, Label, Tooltip } from "@heroui/react";
 import {
@@ -17,8 +17,9 @@ import {
   Menu as MenuIcon,
   Download,
 } from "lucide-react";
-import { api, formatBytes } from "@/lib/api";
-import { useMe, useStats } from "@/lib/hooks";
+import { api, enc, formatBytes } from "@/lib/api";
+import { useLibraries, useMe, useStats } from "@/lib/hooks";
+import type { Library } from "@/lib/types";
 import { SearchBox } from "./SearchBox";
 
 const NAV = [
@@ -27,6 +28,57 @@ const NAV = [
   { href: "/trash", label: "Trash", icon: Trash2 },
   { href: "/admin", label: "Admin", icon: ShieldCheck, adminOnly: true },
 ];
+
+const navLinkClass = (active: boolean) =>
+  `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
+    active ? "bg-accent/15 text-accent" : "text-muted hover:bg-foreground/5 hover:text-foreground"
+  }`;
+
+/**
+ * One row per attached folder. Lives in its own component because it reads the
+ * current ?p= to know which folder you are inside, and useSearchParams needs a
+ * Suspense boundary of its own — putting it here keeps every page that renders
+ * AppShell free of that requirement.
+ */
+function LibraryList({
+  libraries,
+  onNavigate,
+}: {
+  libraries: Library[];
+  onNavigate: () => void;
+}) {
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const current = pathname === "/" ? (params.get("p") ?? "") : "";
+  const activeId = current.split("/")[0];
+
+  return (
+    <div className="mt-3">
+      <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted/80">
+        Folders
+      </p>
+      <nav className="flex flex-col gap-1">
+        {libraries.map((lib) => (
+          <Link
+            key={lib.id}
+            href={`/?p=${enc(lib.id)}`}
+            onClick={onNavigate}
+            title={lib.available ? lib.root : `${lib.root} — not available right now`}
+            className={navLinkClass(activeId === lib.id)}
+          >
+            <HardDrive className={`size-4.5 shrink-0 ${lib.available ? "" : "opacity-40"}`} />
+            <span className="truncate">{lib.name}</span>
+            {!lib.available && (
+              <span className="ml-auto shrink-0 rounded-md bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold text-warning">
+                away
+              </span>
+            )}
+          </Link>
+        ))}
+      </nav>
+    </div>
+  );
+}
 
 function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
@@ -85,6 +137,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: stats } = useStats(!!me);
+  const { data: libData } = useLibraries(!!me);
+  const libraries = libData?.libraries ?? [];
+  const multiLibrary = !!libData?.multi && libraries.length > 1;
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const appName = me?.appName || process.env.NEXT_PUBLIC_APP_NAME || "Nimbus Drive";
@@ -97,7 +152,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const nav = NAV.filter((n) => !(n.adminOnly && !me?.isAdmin));
+  const nav = NAV
+    .filter((n) => !(n.adminOnly && !me?.isAdmin))
+    // with several folders attached, one "My Drive" row would be a lie — the
+    // list of folders takes its place
+    .filter((n) => !(multiLibrary && n.href === "/"));
 
   return (
     <div className="flex min-h-dvh w-full">
@@ -135,6 +194,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               );
             })}
           </nav>
+
+          {multiLibrary && (
+            <Suspense fallback={null}>
+              <LibraryList libraries={libraries} onNavigate={() => setSidebarOpen(false)} />
+            </Suspense>
+          )}
 
           <div className="mt-auto">
             {stats && (

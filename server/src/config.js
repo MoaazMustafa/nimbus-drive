@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
+import { buildLibraries } from './libraries.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Project root = two levels up from server/src
@@ -29,6 +30,8 @@ const config = {
   apiPort: num(process.env.API_PORT, 4400),
   apiHost: process.env.API_HOST || '127.0.0.1',
   storageRoot: abs(process.env.STORAGE_ROOT) || path.join(PROJECT_ROOT, 'storage'),
+  storageRootName: (process.env.STORAGE_ROOT_NAME || 'My Drive').trim() || 'My Drive',
+  storageRoots: process.env.STORAGE_ROOTS || '',
   dataDir: abs(process.env.DATA_DIR) || path.join(PROJECT_ROOT, 'data'),
   adminEmail: (process.env.ADMIN_EMAIL || '').trim().toLowerCase(),
   google: {
@@ -50,6 +53,23 @@ if (!config.adminEmail) problems.push('ADMIN_EMAIL is not set — nobody would b
 if (!config.google.clientId || !config.google.clientSecret) {
   problems.push('GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not set — Google sign-in cannot work. See SETUP.md.');
 }
+// Attached folders. The first is always STORAGE_ROOT, so a drive that has only
+// ever had one folder keeps behaving exactly as it did.
+const built = buildLibraries({
+  defaultRoot: config.storageRoot,
+  defaultName: config.storageRootName,
+  spec: config.storageRoots,
+  resolve: (p) => abs(p),
+});
+config.libraries = built.libraries.map((l) => ({ ...l, available: fs.existsSync(l.root) }));
+config.multiLibrary = config.libraries.length > 1;
+for (const p of built.problems) problems.push(p);
+for (const lib of config.libraries) {
+  // A removable drive that is not plugged in is not a crash — it is a folder
+  // that is temporarily away, and the UI says so.
+  if (!lib.available) problems.push(`Attached folder "${lib.name}" is not available right now (${lib.root}).`);
+}
+
 export const configProblems = problems;
 
 // Make sure the writable directories exist up front.

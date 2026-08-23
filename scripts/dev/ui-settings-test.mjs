@@ -58,6 +58,7 @@ const makeState = (config) => ({
 const ENV = {
   APP_NAME: 'Nimbus Drive', BASE_URL: 'https://cloud.example.com', STORAGE_ROOT: 'C:\\Files',
   ADMIN_EMAIL: 'a@b.c', GOOGLE_CLIENT_ID: 'cid', GOOGLE_CLIENT_SECRET: 'secret',
+  STORAGE_ROOTS: 'Family Photos=D:\\Photos; Movies=E:\\Media',
 };
 
 /** Open the real UI with a stubbed bridge; returns { page, saved } */
@@ -104,7 +105,7 @@ async function openUI(browser, config) {
         Object.assign(window.__store, payload.app || {});
         return { ok: true, restartNeeded: false, state };
       },
-      pickFolder: async () => null,
+      pickFolder: async () => window.__pickResult ?? null,
       getLogs: async () => [], exportLogs: async () => null,
       openLink: noop,
     };
@@ -243,6 +244,67 @@ console.log('\n— the in-app tunnel setup panel');
 
   const mode = await page.$eval('#f-tunnelMode', (el) => el.value);
   check('a successful setup leaves the app in named mode', mode === 'named', mode);
+  await page.close();
+}
+
+
+console.log('\n— attaching more folders and drives');
+{
+  const { page, errors } = await openUI(browser, {
+    tunnelEnabled: false, tunnelMode: 'named', tunnelToken: '',
+    tunnelName: 'nimbus', cloudflaredPath: 'cloudflared', startServicesOnLaunch: true, openAtLogin: false,
+  });
+  check('the panel loads without a page error', errors.length === 0, errors[0] || '');
+  await openSettings(page);
+
+  const rows = await page.$$eval('#roots-list li', (els) => els.map((el) => ({
+    name: el.querySelector('input')?.value ?? null,
+    path: el.querySelector('.why')?.textContent ?? '',
+  })));
+  check('saved folders are listed', rows.length === 2, JSON.stringify(rows));
+  check('...with their names', rows.map((r) => r.name).join(', ') === 'Family Photos, Movies', JSON.stringify(rows));
+  check('...and their paths', rows[1].path === 'E:\\Media', rows[1].path);
+
+  // add one through the folder picker
+  await page.evaluate(() => { window.__pickResult = 'F:\\Backup'; });
+  await page.click('#btn-root-add');
+  await page.waitForTimeout(150);
+  const after = await page.$$eval('#roots-list li input', (els) => els.map((e) => e.value));
+  check('picking a folder adds it', after.length === 3, JSON.stringify(after));
+  check('...named after the folder itself', after[2] === 'Backup', after[2]);
+
+  // adding the same folder twice must not duplicate it
+  await page.click('#btn-root-add');
+  await page.waitForTimeout(150);
+  check('the same folder cannot be added twice', (await page.$$eval('#roots-list li input', (e) => e.length)) === 3);
+
+  // rename, remove, save
+  await page.fill('#roots-list li:nth-child(1) input', 'Photos');
+  await page.click('#roots-list li:nth-child(2) button');
+  await page.waitForTimeout(150);
+  check('removing a row drops it', (await page.$$eval('#roots-list li input', (e) => e.length)) === 2);
+
+  await page.click('#btn-save');
+  await page.waitForTimeout(250);
+  const saved = await page.evaluate(() => window.__saved.at(-1));
+  check('the folder list is saved back to STORAGE_ROOTS',
+    saved?.env?.STORAGE_ROOTS === 'Photos=D:\\Photos; Backup=F:\\Backup', JSON.stringify(saved?.env?.STORAGE_ROOTS));
+  check('...in the "Name=Path;" form the server reads', /=.+;/.test(saved?.env?.STORAGE_ROOTS || ''), saved?.env?.STORAGE_ROOTS);
+
+  // an empty list must clear the setting, not leave the old value behind
+  await reopenSettings(page);
+  for (let guard = 0; guard < 6; guard += 1) {
+    const left = await page.$$eval('#roots-list li button', (els) => els.length);
+    if (!left) break;
+    await page.click('#roots-list li button');
+    await page.waitForTimeout(120);
+  }
+  check('every folder can be removed', (await page.$$eval('#roots-list li button', (e) => e.length)) === 0);
+  check('...and the empty state explains itself', /No extra folders yet/.test(await page.$eval('#roots-list', (el) => el.textContent)), await page.$eval('#roots-list', (el) => el.textContent));
+  await page.click('#btn-save');
+  await page.waitForTimeout(250);
+  const cleared = await page.evaluate(() => window.__saved.at(-1));
+  check('removing every folder clears the setting', cleared?.env?.STORAGE_ROOTS === '', JSON.stringify(cleared?.env?.STORAGE_ROOTS));
   await page.close();
 }
 

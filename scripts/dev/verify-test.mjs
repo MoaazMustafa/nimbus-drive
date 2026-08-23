@@ -73,6 +73,15 @@ const fetchImpl = (url, opts) => {
 };
 const dnsOk = { resolve: async () => ['104.21.5.5'] };
 const dnsMissing = { resolve: async () => { const e = new Error('not found'); e.code = 'ENOTFOUND'; throw e; } };
+// the shape that produced a self-contradicting report: the nameserver path is
+// refused on this PC, while the OS resolver answers fine
+const refuse = (code) => async () => { const e = new Error(code); e.code = code; throw e; };
+const dnsRefused = { resolve4: refuse('ECONNREFUSED'), resolve: refuse('ECONNREFUSED'), resolve6: refuse('ECONNREFUSED'), resolveCname: refuse('ECONNREFUSED'), lookup: refuse('ECONNREFUSED') };
+const dnsOsOnly = {
+  resolve4: refuse('ECONNREFUSED'), resolve: refuse('ECONNREFUSED'),
+  resolve6: refuse('ENODATA'), resolveCname: refuse('ENOTFOUND'),
+  lookup: async () => [{ address: '104.21.5.5', family: 4 }],
+};
 
 // a cloudflared config that routes cloud.test to the right port
 const projectRoot = path.join(tmp, 'proj');
@@ -129,9 +138,37 @@ try {
   state.publicMode = 'ok';
 
   console.log('\n— DNS record missing');
+  state.publicMode = 'down';
   out = await runDiagnostics({ ...baseOpts(), dns: dnsMissing });
-  check('DNS failure surfaced', statusOf(out, 'dns') === 'fail');
+  check('DNS failure surfaced', statusOf(out, 'dns') === 'fail', statusOf(out, 'dns'));
   check('fix mentions the CNAME to create', /cfargotunnel\.com/.test(detailOf(out, 'dns').fix || ''));
+  state.publicMode = 'ok';
+
+  console.log('\n— the report never contradicts itself');
+  {
+    // the screenshot that started this: "does not resolve (ECONNREFUSED)" sitting
+    // directly above "is live and served by THIS PC". Both cannot be true, and
+    // the reachable address is the stronger evidence.
+    out = await runDiagnostics({ ...baseOpts(), dns: dnsRefused });
+    check('a reachable address is reported reachable', statusOf(out, 'public') === 'ok', statusOf(out, 'public'));
+    check('...so DNS is not reported as broken', statusOf(out, 'dns') !== 'fail', statusOf(out, 'dns'));
+    check('...it is a warning about THIS PC, not the domain', statusOf(out, 'dns') === 'warn');
+    check('...and says the name is in fact resolving', /is resolving/.test(detailOf(out, 'dns').detail || ''), detailOf(out, 'dns').detail);
+    check('...and names what was actually refused', /ECONNREFUSED/.test(detailOf(out, 'dns').detail || ''), detailOf(out, 'dns').detail);
+    check('...and tells the owner there is nothing to fix', /Nothing to fix/.test(detailOf(out, 'dns').fix || ''), detailOf(out, 'dns').fix);
+    check('...and the overall verdict is no longer "problem found"', out.overall !== 'fail', out.overall);
+
+    // when only the OS resolver answers, that is a clean pass — not a warning
+    out = await runDiagnostics({ ...baseOpts(), dns: dnsOsOnly });
+    check('the OS resolver alone is enough to pass', statusOf(out, 'dns') === 'ok', statusOf(out, 'dns'));
+    check('...and the report says which path answered', /resolver/.test(detailOf(out, 'dns').detail || ''), detailOf(out, 'dns').detail);
+
+    // and a genuinely missing record with nothing reachable still fails loudly
+    state.publicMode = 'down';
+    out = await runDiagnostics({ ...baseOpts(), dns: dnsRefused });
+    check('a truly dead domain still fails', statusOf(out, 'dns') === 'fail', statusOf(out, 'dns'));
+    state.publicMode = 'ok';
+  }
 
   console.log('\n— tunnel routes the wrong port (the silent 502 maker)');
   writeCfg('cloud.test', webPort + 7);
