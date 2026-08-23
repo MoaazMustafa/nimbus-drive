@@ -373,7 +373,7 @@ function createWindow() {
     minWidth: 780,
     minHeight: 560,
     show: !startHidden,
-    backgroundColor: '#0b0f17',
+    backgroundColor: '#f5f7f1',   // must match --bg, or the window flashes dark before the page paints
     icon: iconPath(),
     title: 'Nimbus Drive',
     webPreferences: {

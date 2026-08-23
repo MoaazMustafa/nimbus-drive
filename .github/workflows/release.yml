@@ -58,6 +58,8 @@ jobs:
         run: npm i --no-save playwright && npx playwright install --with-deps chromium
       - name: Settings persistence (renderer) tests
         run: node scripts/dev/ui-settings-test.mjs
+      - name: Theme & contrast audit
+        run: node scripts/dev/ui-theme-test.mjs
 
   installer:
     needs: test
