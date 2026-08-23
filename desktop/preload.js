@@ -30,6 +30,13 @@ contextBridge.exposeInMainWorld('nimbus', {
   openReleases: () => ipcRenderer.invoke('open:releases'),
   verifyDomain: () => ipcRenderer.invoke('verify:run'),
 
+  tunnelStatus: () => ipcRenderer.invoke('tunnel:status'),
+  tunnelInstall: () => ipcRenderer.invoke('tunnel:install'),
+  tunnelSetup: (opts) => ipcRenderer.invoke('tunnel:setup', opts),
+  tunnelCancel: () => ipcRenderer.invoke('tunnel:cancel'),
+  tunnelDelete: (name) => ipcRenderer.invoke('tunnel:delete', name),
+  onTunnelStep: (cb) => on('tunnel-step', cb),
+
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (payload) => ipcRenderer.invoke('config:save', payload),
   pickFolder: (current) => ipcRenderer.invoke('dialog:pickFolder', current),

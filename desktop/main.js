@@ -30,6 +30,8 @@ const { Bootstrap } = require('./lib/bootstrap');
 const { GitHub, parseRepo } = require('./lib/github');
 const { ensureNode, ensureCloudflared } = require('./lib/runtime');
 const { runDiagnostics } = require('./lib/verify');
+const cfTunnel = require('./lib/cftunnel');
+const { hostnameFromBaseUrl } = require('./lib/cfconfig');
 const { isNewerVersion } = require('./lib/version');
 
 // The home of this app: where installs and updates come from. Baked in so a
@@ -95,6 +97,8 @@ let quitting = false;
 let projectRoot = null;
 let updateInfo = null; // {version, name, notes} when newer than installed
 let installBusy = false;
+let tunnelBusy = false;
+let tunnelAbort = null;
 
 // ── self-update of THIS app (the shell) via electron-updater ────────
 // Uses the latest.yml + .blockmap that CI already publishes with every
@@ -605,6 +609,101 @@ function relaunchApp() {
     } catch (err) {
       return { ok: false, error: err.message };
     }
+  });
+
+  // ── Cloudflare tunnel: install, authorize, create, route ─────────
+  // Everything SETUP.md used to ask people to type in a terminal. cloudflared
+  // does the work; the app only drives it and shows what is happening.
+  const cfHome = () => os.homedir();
+  const pushTunnel = (evt) => { if (win && !win.isDestroyed()) win.webContents.send('tunnel-step', evt); };
+  const findCloudflared = async () => (await which(appConfig.cloudflaredPath || 'cloudflared')) || null;
+
+  async function installCloudflared() {
+    pushTunnel({ step: 'install', status: 'running', detail: 'Downloading cloudflared…' });
+    const got = await ensureCloudflared({
+      homeDir: homeDir(),
+      onProgress: (p) => pushTunnel({ step: 'install', status: 'running', detail: 'Downloading cloudflared…', progress: p.percent }),
+    });
+    appConfig.cloudflaredPath = got;
+    saveConfig();
+    pushTunnel({ step: 'install', status: 'ok', detail: 'cloudflared is installed.' });
+    return got;
+  }
+
+  ipcMain.handle('tunnel:status', async () => {
+    try {
+      const env = supervisor?.env() || readEnv(envPath()) || {};
+      const bin = await findCloudflared();
+      const st = await cfTunnel.status({
+        bin, home: cfHome(), baseUrl: env.BASE_URL, tunnelName: appConfig.tunnelName || 'nimbus',
+      });
+      return { ok: true, status: { ...st, bin, baseUrl: env.BASE_URL || null } };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('tunnel:install', async () => {
+    try { return { ok: true, path: await installCloudflared() }; }
+    catch (err) { pushTunnel({ step: 'install', status: 'fail', detail: err.message }); return { ok: false, error: err.message }; }
+  });
+
+  ipcMain.handle('tunnel:setup', async (_e, opts = {}) => {
+    if (tunnelBusy) return { ok: false, error: 'Tunnel setup is already running.' };
+    tunnelBusy = true;
+    tunnelAbort = new AbortController();
+    try {
+      const env = supervisor?.env() || readEnv(envPath()) || {};
+      const hostname = String(opts.hostname || '').trim() || hostnameFromBaseUrl(env.BASE_URL);
+      if (!hostname) {
+        const msg = 'Set BASE_URL in Settings to the address family will use (for example https://cloud.example.com), then run this again.';
+        pushTunnel({ step: 'done', status: 'fail', detail: msg });
+        return { ok: false, error: msg };
+      }
+      const bin = (await findCloudflared()) || (await installCloudflared());
+      const res = await cfTunnel.setup({
+        bin,
+        home: cfHome(),
+        name: appConfig.tunnelName || 'nimbus',
+        hostname,
+        port: supervisor?.webPort || 3000,
+        overwriteDns: !!opts.overwriteDns,
+        recreate: !!opts.recreate,
+        signal: tunnelAbort.signal,
+        onStep: (evt) => {
+          pushTunnel(evt);
+          // the authorization page must open by itself — nobody should have to
+          // copy a URL out of a log
+          if (evt.url) shell.openExternal(evt.url).catch(() => {});
+        },
+      });
+      // a completed setup IS a named tunnel; leaving the mode elsewhere would
+      // silently ignore everything that was just created
+      appConfig.tunnelEnabled = true;
+      appConfig.tunnelMode = 'named';
+      saveConfig();
+      pushTunnel({ step: 'done', status: 'ok', detail: `Ready — ${res.hostname} now reaches this PC.` });
+      pushState();
+      return { ok: true, result: res, state: publicState() };
+    } catch (err) {
+      const cancelled = /cancel/i.test(err.message || '');
+      pushTunnel({ step: 'done', status: 'fail', detail: cancelled ? 'Cancelled.' : err.message });
+      return { ok: false, error: err.message, cancelled, needsOverwrite: !!err.needsOverwrite, needsRecreate: !!err.needsRecreate };
+    } finally {
+      tunnelBusy = false;
+      tunnelAbort = null;
+    }
+  });
+
+  ipcMain.handle('tunnel:cancel', () => { tunnelAbort?.abort(); return { ok: true }; });
+
+  ipcMain.handle('tunnel:delete', async (_e, name) => {
+    try {
+      const bin = await findCloudflared();
+      if (!bin) return { ok: false, error: 'cloudflared is not installed yet.' };
+      await cfTunnel.deleteTunnel({ bin, home: cfHome(), name: name || appConfig.tunnelName || 'nimbus' });
+      return { ok: true };
+    } catch (err) { return { ok: false, error: err.message }; }
   });
 
   ipcMain.handle('open:releases', () => {

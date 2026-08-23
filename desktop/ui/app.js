@@ -480,6 +480,12 @@ function updateTunnelUI() {
   $("tunnel-options").classList.toggle("hidden", !enabled);
   $("group-tunnelToken").classList.toggle("hidden", mode !== "token");
   $("group-tunnelName").classList.toggle("hidden", mode !== "named");
+  const showSetup = enabled && mode === "named";
+  if ($("tunnel-setup")) {
+    const was = !$("tunnel-setup").classList.contains("hidden");
+    $("tunnel-setup").classList.toggle("hidden", !showSetup);
+    if (showSetup && !was && typeof refreshTunnelStatus === "function") refreshTunnelStatus();
+  }
 }
 
 async function loadConfigIntoForm() {
@@ -684,6 +690,139 @@ if ($("btn-verify")) {
       btn.textContent = "Verify now";
     }
   });
+}
+
+/* ── Cloudflare tunnel setup ─────────────────────────── */
+const TUNNEL_STEP_LABEL = {
+  install: "Install cloudflared",
+  link: "Authorize your Cloudflare account",
+  tunnel: "Create the tunnel",
+  dns: "Point your domain at it",
+  config: "Write the tunnel configuration",
+  done: "Finish",
+};
+const STEP_CLASS = { ok: "ok", fail: "fail", running: "warn", action: "warn" };
+const STEP_MARK = { ok: "✓", fail: "✗", running: "…", action: "→" };
+let tunnelSteps = [];
+
+function renderTunnelSteps() {
+  const list = $("tunnel-steps");
+  if (!list) return;
+  list.classList.toggle("hidden", tunnelSteps.length === 0);
+  list.textContent = "";
+  for (const s of tunnelSteps) {
+    const cls = STEP_CLASS[s.status] || "warn";
+    const li = document.createElement("li");
+    li.className = cls;
+    const mark = document.createElement("span");
+    mark.className = `mark ${cls}`;
+    mark.textContent = STEP_MARK[s.status] || "·";
+    const head = document.createElement("span");
+    head.className = "head";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = TUNNEL_STEP_LABEL[s.step] || s.step;
+    const why = document.createElement("span");
+    why.className = "why";
+    why.textContent = s.detail || (s.progress != null ? `${Math.round(s.progress)}%` : "");
+    head.append(name, why);
+    li.append(mark, head);
+    list.append(li);
+  }
+}
+function noteTunnelStep(evt) {
+  const i = tunnelSteps.findIndex((s) => s.step === evt.step);
+  if (i > -1) tunnelSteps[i] = { ...tunnelSteps[i], ...evt };
+  else tunnelSteps.push({ ...evt });
+  renderTunnelSteps();
+}
+if (nim.onTunnelStep) nim.onTunnelStep(noteTunnelStep);
+
+async function refreshTunnelStatus() {
+  const pill = $("tunnel-state");
+  const hint = $("tunnel-hint");
+  if (!pill || !nim.tunnelStatus) return;
+  pill.className = "pill gray";
+  pill.textContent = "checking…";
+  if (hint) hint.textContent = "";
+  let res;
+  try { res = await nim.tunnelStatus(); }
+  catch (err) { pill.className = "pill red"; pill.textContent = "error"; if (hint) hint.textContent = String(err.message || err); return; }
+  if (!res || !res.ok) {
+    pill.className = "pill red";
+    pill.textContent = "unavailable";
+    if (hint) hint.textContent = (res && res.error) || "could not read the tunnel state";
+    return;
+  }
+  const s = res.status;
+  const [cls, label] = !s.installed ? ["yellow", "cloudflared missing"]
+    : !s.linked ? ["yellow", "not signed in"]
+    : !s.hasConfig ? ["yellow", "not configured"]
+    : ["green", "ready"];
+  pill.className = `pill ${cls}`;
+  pill.textContent = label;
+
+  const parts = [];
+  parts.push(s.hostname
+    ? `Domain: ${s.hostname}.`
+    : "Set BASE_URL above to your domain first — the tunnel needs to know what to route.");
+  if (s.linked && Array.isArray(s.tunnels)) {
+    parts.push(s.tunnels.length
+      ? `Tunnels on this account: ${s.tunnels.map((t) => t.name).join(", ")}.`
+      : "No tunnels on this account yet.");
+  }
+  if (s.tunnelsError) parts.push(s.tunnelsError);
+  // the case that strands people: the tunnel exists remotely, its secret does not
+  if (s.match && Array.isArray(s.credentials) && !s.credentials.some((c) => c.id === s.match.id)) {
+    parts.push(`"${s.match.name}" exists in your account but its credentials are not on this PC — tick “Recreate the tunnel on this PC”.`);
+  }
+  if (hint) hint.textContent = parts.join(" ");
+}
+
+function setTunnelBusy(busy, label) {
+  for (const id of ["btn-tunnel-setup", "btn-tunnel-install", "btn-tunnel-refresh"]) {
+    if ($(id)) $(id).disabled = busy;
+  }
+  $("btn-tunnel-cancel")?.classList.toggle("hidden", !busy);
+  if ($("btn-tunnel-setup")) $("btn-tunnel-setup").textContent = busy ? (label || "Working…") : "Set up the tunnel";
+}
+
+if ($("btn-tunnel-setup")) {
+  $("btn-tunnel-setup").addEventListener("click", async () => {
+    tunnelSteps = [];
+    renderTunnelSteps();
+    setTunnelBusy(true, "Setting up…");
+    try {
+      const res = await nim.tunnelSetup({
+        overwriteDns: $("f-tunnelOverwriteDns")?.checked || false,
+        recreate: $("f-tunnelRecreate")?.checked || false,
+      });
+      if (!res.ok && res.needsOverwrite && $("f-tunnelOverwriteDns")) $("f-tunnelOverwriteDns").checked = false;
+      if (!res.ok && res.needsRecreate && $("f-tunnelRecreate")) $("f-tunnelRecreate").checked = false;
+      if (res.ok) {
+        // setup implies a named tunnel — reflect what the app just decided
+        if ($("f-tunnelEnabled")) $("f-tunnelEnabled").checked = true;
+        if ($("f-tunnelMode")) $("f-tunnelMode").value = "named";
+        updateTunnelUI();
+      }
+    } finally {
+      setTunnelBusy(false);
+      refreshTunnelStatus();
+    }
+  });
+}
+if ($("btn-tunnel-install")) {
+  $("btn-tunnel-install").addEventListener("click", async () => {
+    setTunnelBusy(true, "Installing…");
+    try { await nim.tunnelInstall(); }
+    finally { setTunnelBusy(false); refreshTunnelStatus(); }
+  });
+}
+if ($("btn-tunnel-cancel")) {
+  $("btn-tunnel-cancel").addEventListener("click", () => nim.tunnelCancel && nim.tunnelCancel());
+}
+if ($("btn-tunnel-refresh")) {
+  $("btn-tunnel-refresh").addEventListener("click", () => refreshTunnelStatus());
 }
 
 /* ── boot ────────────────────────────────────────────── */

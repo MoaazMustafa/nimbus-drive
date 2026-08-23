@@ -95,6 +95,15 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--surface2);
 .card h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
 .card.accent { border-color: rgba(37,99,235,.5); background: linear-gradient(180deg, rgba(37,99,235,.10), var(--surface)); }
 .card.narrow { max-width: 460px; }
+/* a panel nested inside a card — the tunnel setup block inside Settings */
+.card.inner {
+  margin: 12px 0 4px; padding: 14px;
+  background: rgba(139,150,173,.05);
+  border-radius: 12px;
+}
+.card.inner h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.card.inner .row { gap: 8px; align-items: center; flex-wrap: wrap; }
+.card.inner .checks { margin-top: 10px; }
 .small-note { font-weight: 400; font-size: 12px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 

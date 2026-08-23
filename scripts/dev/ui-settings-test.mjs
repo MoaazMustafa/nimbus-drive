@@ -67,6 +67,11 @@ async function openUI(browser, config) {
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.addInitScript(([state, env]) => {
     window.__saved = [];
+    window.__calls = [];
+    window.__tunnelStatus = {
+      installed: true, linked: false, hasConfig: false, ready: false,
+      hostname: 'cloud.example.com', tunnels: null, credentials: [], match: null,
+    };
     // the store the fake "main process" persists into — mirrors desktop-config.json
     window.__store = { ...state.app.config };
     const noop = () => {};
@@ -81,6 +86,18 @@ async function openUI(browser, config) {
       checkUpdate: async () => null, runUpdate: async () => ({ ok: true }),
       rollback: async () => ({ ok: true }), rebuild: async () => ({ ok: true }),
       shellUpdateInstall: noop, openReleases: noop, verifyDomain: async () => ({ checks: [] }),
+
+      // tunnel setup bridge
+      tunnelStatus: async () => ({ ok: true, status: window.__tunnelStatus }),
+      tunnelInstall: async () => { window.__calls.push(['install']); return { ok: true, path: 'cloudflared' }; },
+      tunnelSetup: async (opts) => {
+        window.__calls.push(['setup', opts]);
+        for (const e of (window.__setupSteps || [])) window.__onTunnelStep?.(e);
+        return window.__setupResult || { ok: true, result: { hostname: 'cloud.example.com' } };
+      },
+      tunnelCancel: async () => { window.__calls.push(['cancel']); return { ok: true }; },
+      tunnelDelete: async () => ({ ok: true }),
+      onTunnelStep: (cb) => { window.__onTunnelStep = cb; },
       getConfig: async () => ({ env, configured: true, app: { ...state.app, config: { ...window.__store } } }),
       saveConfig: async (payload) => {
         window.__saved.push(JSON.parse(JSON.stringify(payload)));
@@ -164,6 +181,68 @@ console.log('\n— and the old shape reproduces the bug (guards the fix)');
   await page.waitForTimeout(200);
   const saved = await page.evaluate(() => window.__saved.at(-1));
   check('...and saving from that form would have wiped the stored token', saved?.app?.tunnelToken === '', JSON.stringify(saved?.app));
+  await page.close();
+}
+
+
+console.log('\n— the in-app tunnel setup panel');
+{
+  const { page, errors } = await openUI(browser, {
+    tunnelEnabled: true, tunnelMode: 'named', tunnelToken: '',
+    tunnelName: 'nimbus', cloudflaredPath: 'cloudflared', startServicesOnLaunch: true, openAtLogin: false,
+  });
+  check('the panel loads without a page error', errors.length === 0, errors[0] || '');
+  await openSettings(page);
+
+  const visible = await page.$eval('#tunnel-setup', (el) => !el.classList.contains('hidden'));
+  check('the setup panel shows for named mode', visible);
+
+  await page.waitForTimeout(200);
+  const pill = await page.$eval('#tunnel-state', (el) => el.textContent.trim());
+  check('an unlinked account reads "not signed in"', pill === 'not signed in', pill);
+  const hint = await page.$eval('#tunnel-hint', (el) => el.textContent);
+  check('the hint names the domain it will route', hint.includes('cloud.example.com'), hint);
+
+  // the case that strands people: tunnel exists remotely, credentials do not
+  await page.evaluate(() => {
+    window.__tunnelStatus = {
+      installed: true, linked: true, hasConfig: false, ready: false, hostname: 'cloud.example.com',
+      tunnels: [{ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', name: 'nimbus', connections: 0 }],
+      credentials: [], match: { id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', name: 'nimbus' },
+    };
+  });
+  await page.click('#btn-tunnel-refresh');
+  await page.waitForTimeout(200);
+  const hint2 = await page.$eval('#tunnel-hint', (el) => el.textContent);
+  check('a tunnel with no local credentials is called out', /credentials are not on this PC/.test(hint2), hint2);
+  check('...and points at the recreate option', /Recreate the tunnel on this PC/.test(hint2), hint2);
+
+  // run the setup and watch the steps render
+  await page.evaluate(() => {
+    window.__setupSteps = [
+      { step: 'link', status: 'running', detail: 'Opening Cloudflare in your browser…' },
+      { step: 'link', status: 'ok', detail: 'Cloudflare account linked.' },
+      { step: 'tunnel', status: 'ok', detail: 'Created the tunnel "nimbus".' },
+      { step: 'dns', status: 'ok', detail: 'cloud.example.com now points at the tunnel.' },
+      { step: 'config', status: 'ok', detail: 'Configuration written.' },
+    ];
+  });
+  await page.check('#f-tunnelOverwriteDns');
+  await page.click('#btn-tunnel-setup');
+  await page.waitForTimeout(300);
+
+  const call = await page.evaluate(() => window.__calls.find((c) => c[0] === 'setup'));
+  check('setup is invoked', !!call);
+  check('...and carries the "replace DNS record" choice', call?.[1]?.overwriteDns === true, JSON.stringify(call?.[1]));
+  check('...and the recreate choice', call?.[1]?.recreate === false, JSON.stringify(call?.[1]));
+
+  const stepText = await page.$eval('#tunnel-steps', (el) => el.textContent);
+  check('every step is shown to the user', ['Authorize your Cloudflare account', 'Create the tunnel', 'Point your domain at it', 'Write the tunnel configuration'].every((t) => stepText.includes(t)), stepText);
+  check('a repeated step updates in place rather than duplicating', (stepText.match(/Authorize your Cloudflare account/g) || []).length === 1, stepText);
+  check('the final state of a step wins', stepText.includes('Cloudflare account linked.'), stepText);
+
+  const mode = await page.$eval('#f-tunnelMode', (el) => el.value);
+  check('a successful setup leaves the app in named mode', mode === 'named', mode);
   await page.close();
 }
 

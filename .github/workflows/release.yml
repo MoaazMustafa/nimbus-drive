@@ -52,6 +52,8 @@ jobs:
         run: node scripts/dev/tunnel-test.mjs
       - name: Tunnel config discovery & fallback tests
         run: node scripts/dev/cfconfig-test.mjs
+      - name: In-app tunnel setup tests
+        run: node scripts/dev/cftunnel-test.mjs
       - name: Install Playwright (renderer tests drive the real Settings UI)
         run: npm i --no-save playwright && npx playwright install --with-deps chromium
       - name: Settings persistence (renderer) tests

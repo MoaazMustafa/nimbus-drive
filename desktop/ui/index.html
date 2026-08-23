@@ -196,6 +196,24 @@
             </div>
             <div id="group-tunnelName" class="hidden">
               <label>Tunnel name<input id="f-tunnelName" type="text" class="mono" placeholder="nimbus" /></label>
+
+              <div id="tunnel-setup" class="card inner hidden">
+                <div class="row">
+                  <h3 class="grow">Cloudflare connection</h3>
+                  <span id="tunnel-state" class="pill gray">checking…</span>
+                  <button id="btn-tunnel-refresh" class="btn secondary small" type="button">Refresh</button>
+                </div>
+                <p class="muted small-note">Nimbus can do the whole setup for you: install cloudflared, sign in to Cloudflare in your browser, create the tunnel and point your domain at it. No terminal, no config files.</p>
+                <ul id="tunnel-steps" class="checks hidden"></ul>
+                <p id="tunnel-hint" class="muted small-note"></p>
+                <div class="row">
+                  <button id="btn-tunnel-setup" class="btn primary small" type="button">Set up the tunnel</button>
+                  <button id="btn-tunnel-install" class="btn secondary small" type="button">Install cloudflared only</button>
+                  <button id="btn-tunnel-cancel" class="btn secondary small hidden" type="button">Cancel</button>
+                </div>
+                <label class="check"><input type="checkbox" id="f-tunnelOverwriteDns" /> Replace an existing DNS record for this domain</label>
+                <label class="check"><input type="checkbox" id="f-tunnelRecreate" /> Recreate the tunnel on this PC <span class="hint">(use if the account has the tunnel but this PC lost its credentials)</span></label>
+              </div>
             </div>
             <label>cloudflared binary path<input id="f-cloudflaredPath" type="text" class="mono" placeholder="cloudflared" /></label>
           </div>
